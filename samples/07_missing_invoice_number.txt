@@ -1,0 +1,17 @@
+TAX INVOICE
+Orbit Facility Management LLP
+GSTIN: 29AAFFO5678L1Z9
+
+Invoice Date: 2026-11-01
+Due Date: 2026-11-30
+Currency: INR
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Housekeeping services, October                     1     75,000.00     75,000.00
+--------------------------------------------------------------------------------
+                                                             Subtotal: 75,000.00
+                                                              GST 18%: 13,500.00
+                                                                Total: 88,500.00
+
+Thank you for your business.

@@ -1,0 +1,18 @@
+INVOICE
+Bluepeak Cloud Services, Inc.
+
+Invoice #: BP-10388
+Date: Sep 6, 2026
+Due: Oct 6, 2026
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Managed compute, September                         1     $1,250.00     $1,250.00
+Object storage (TB)                                2        $85.00       $170.00
+Priority support                                   1       $300.00       $300.00
+--------------------------------------------------------------------------------
+                                                             Subtotal: $1,720.00
+                                                      Sales Tax (8.25%): $141.90
+                                                            Total Due: $1,861.90
+
+Thank you for your business.

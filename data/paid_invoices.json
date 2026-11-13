@@ -1,0 +1,5 @@
+[
+  {"vendor_id": "V002", "invoice_number": "BP-10388", "total": 1861.90, "paid_on": "2026-09-30"},
+  {"vendor_id": "V001", "invoice_number": "NW-2026-0098", "total": 12980.00, "paid_on": "2026-08-14"},
+  {"vendor_id": "V006", "invoice_number": "OFM/26/311", "total": 88500.00, "paid_on": "2026-10-03"}
+]

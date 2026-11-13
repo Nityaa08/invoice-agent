@@ -1,0 +1,21 @@
+INVOICE
+Bluepeak Cloud Services, Inc.
+200 Harbor Street, Suite 4, Portland, OR
+
+Invoice #: BP-10422
+Date: Oct 5, 2026
+Due: Nov 4, 2026
+
+Bill To: Example Retail Co
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Managed compute, October                           1     $1,250.00     $1,250.00
+Object storage (TB)                                2        $85.00       $170.00
+Priority support                                   1       $300.00       $300.00
+--------------------------------------------------------------------------------
+                                                             Subtotal: $1,720.00
+                                                      Sales Tax (8.25%): $141.90
+                                                            Total Due: $1,861.90
+
+Thank you for your business.

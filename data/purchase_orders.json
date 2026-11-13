@@ -1,0 +1,6 @@
+[
+  {"po_number": "PO-7781", "vendor_id": "V001", "currency": "INR", "amount": 30000.00},
+  {"po_number": "PO-5520", "vendor_id": "V003", "currency": "EUR", "amount": 5000.00},
+  {"po_number": "PO-9012", "vendor_id": "V004", "currency": "INR", "amount": 40000.00},
+  {"po_number": "PO-3300", "vendor_id": "V005", "currency": "GBP", "amount": 2000.00}
+]

@@ -1,0 +1,19 @@
+TAX INVOICE
+Saffron Catering Co
+GSTIN: 27AAACS1234K1Z2
+
+Invoice No: SC/2026/0951
+Invoice Date: 2026-11-04
+Due Date: 2026-12-04
+PO Number: PO-9012
+Currency: INR
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Diwali celebration dinner (per plate)            150        300.00     45,000.00
+--------------------------------------------------------------------------------
+                                                             Subtotal: 45,000.00
+                                                                GST 5%: 2,250.00
+                                                                Total: 47,250.00
+
+Thank you for your business.

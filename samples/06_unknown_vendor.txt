@@ -1,0 +1,19 @@
+TAX INVOICE
+Quillmark Stationers
+GSTIN: 33AAQFQ9876P1Z4
+
+Invoice No: QS-311
+Invoice Date: 2026-11-02
+Due Date: 2026-11-17
+Currency: INR
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Whiteboard markers, pack of 12                    15        240.00      3,600.00
+Spiral notebooks                                  50         60.00      3,000.00
+--------------------------------------------------------------------------------
+                                                              Subtotal: 6,600.00
+                                                               GST 18%: 1,188.00
+                                                                 Total: 7,788.00
+
+Thank you for your business.

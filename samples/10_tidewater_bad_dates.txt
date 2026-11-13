@@ -1,0 +1,19 @@
+INVOICE
+Tidewater Print & Signage Ltd
+VAT Reg No: GB123456789
+
+Invoice No: TPS-8812
+Invoice Date: 20/10/2026
+Due Date: 10/10/2026
+PO Number: PO-3300
+Currency: GBP
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Vinyl banners, 3m x 1m                             5        290.00      1,450.00
+--------------------------------------------------------------------------------
+                                                              Subtotal: 1,450.00
+                                                                 VAT 20%: 290.00
+                                                                 Total: 1,740.00
+
+Thank you for your business.

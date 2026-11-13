@@ -1,0 +1,10 @@
+[
+  {"vendor_id": "V001", "name": "Northwind Office Supplies Pvt Ltd", "tax_id": "29ABCDE1234F1Z5", "currency": "INR"},
+  {"vendor_id": "V002", "name": "Bluepeak Cloud Services Inc", "tax_id": null, "currency": "USD"},
+  {"vendor_id": "V003", "name": "Kestrel Logistics GmbH", "tax_id": "DE811234567", "currency": "EUR"},
+  {"vendor_id": "V004", "name": "Saffron Catering Co", "tax_id": "27AAACS1234K1Z2", "currency": "INR"},
+  {"vendor_id": "V005", "name": "Tidewater Print & Signage Ltd", "tax_id": "GB123456789", "currency": "GBP"},
+  {"vendor_id": "V006", "name": "Orbit Facility Management LLP", "tax_id": "29AAFFO5678L1Z9", "currency": "INR"},
+  {"vendor_id": "V007", "name": "Lumen Analytics Pte Ltd", "tax_id": null, "currency": "SGD"},
+  {"vendor_id": "V008", "name": "Harbor Legal Associates LLP", "tax_id": "27AAGFH4321M1Z3", "currency": "INR"}
+]
