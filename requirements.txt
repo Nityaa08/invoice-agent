@@ -1,0 +1,11 @@
+# Runtime: enough for the API, the demo and the optional real LLM.
+fastapi>=0.120,<1
+uvicorn>=0.38
+python-multipart>=0.0.20
+pydantic>=2.11,<3
+langgraph>=1.2,<2
+langgraph-checkpoint-sqlite>=3.0,<4
+langchain-core>=1.0,<2
+langchain-openai>=1.0,<2
+numpy>=2.0
+pypdf>=6.0

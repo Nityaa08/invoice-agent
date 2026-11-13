@@ -1,0 +1,4 @@
+-r requirements.txt
+pytest>=8
+httpx>=0.28
+reportlab>=4.0  # only to regenerate the sample PDFs (scripts/make_samples.py)
