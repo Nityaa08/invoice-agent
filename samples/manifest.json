@@ -1,0 +1,126 @@
+{
+  "_about": "Hand-labelled answers for the synthetic sample invoices. All companies are made up. 'expected' is what is printed on the invoice; 'decision' is what the rules should decide (auto_approve or review); 'failed_rules' are the rules that should fail. Used by the demo page and by evals/run_eval.py.",
+  "samples": [
+    {
+      "file": "01_northwind_ok.pdf",
+      "title": "Clean GST invoice with PO",
+      "decision": "auto_approve",
+      "failed_rules": [],
+      "expected": {
+        "vendor_name": "Northwind Office Supplies Pvt Ltd", "vendor_tax_id": "29ABCDE1234F1Z5",
+        "invoice_number": "NW-2026-0142", "invoice_date": "2026-10-02", "due_date": "2026-11-01",
+        "currency": "INR", "po_number": "PO-7781", "line_count": 2,
+        "subtotal": 20300.0, "tax": 3654.0, "total": 23954.0
+      }
+    },
+    {
+      "file": "02_bluepeak_ok.txt",
+      "title": "US invoice, $ amounts, no PO",
+      "decision": "auto_approve",
+      "failed_rules": [],
+      "expected": {
+        "vendor_name": "Bluepeak Cloud Services, Inc.", "vendor_tax_id": null,
+        "invoice_number": "BP-10422", "invoice_date": "2026-10-05", "due_date": "2026-11-04",
+        "currency": "USD", "po_number": null, "line_count": 3,
+        "subtotal": 1720.0, "tax": 141.9, "total": 1861.9
+      }
+    },
+    {
+      "file": "03_kestrel_ok.pdf",
+      "title": "German invoice, 1.234,56 format",
+      "decision": "auto_approve",
+      "failed_rules": [],
+      "expected": {
+        "vendor_name": "Kestrel Logistics GmbH", "vendor_tax_id": "DE811234567",
+        "invoice_number": "KL-2026-5531", "invoice_date": "2026-10-14", "due_date": "2026-11-13",
+        "currency": "EUR", "po_number": "PO-5520", "line_count": 2,
+        "subtotal": 3800.0, "tax": 722.0, "total": 4522.0
+      }
+    },
+    {
+      "file": "04_saffron_wrong_total.pdf",
+      "title": "Wrong total",
+      "decision": "review",
+      "failed_rules": ["subtotal_plus_tax_equals_total"],
+      "expected": {
+        "vendor_name": "Saffron Catering Co", "vendor_tax_id": "27AAACS1234K1Z2",
+        "invoice_number": "SC/2026/0907", "invoice_date": "2026-10-21", "due_date": "2026-11-20",
+        "currency": "INR", "po_number": null, "line_count": 1,
+        "subtotal": 42000.0, "tax": 2100.0, "total": 45100.0
+      }
+    },
+    {
+      "file": "05_bluepeak_duplicate.txt",
+      "title": "Already paid (duplicate)",
+      "decision": "review",
+      "failed_rules": ["not_a_duplicate"],
+      "expected": {
+        "vendor_name": "Bluepeak Cloud Services, Inc.", "vendor_tax_id": null,
+        "invoice_number": "BP-10388", "invoice_date": "2026-09-06", "due_date": "2026-10-06",
+        "currency": "USD", "po_number": null, "line_count": 3,
+        "subtotal": 1720.0, "tax": 141.9, "total": 1861.9
+      }
+    },
+    {
+      "file": "06_unknown_vendor.txt",
+      "title": "Unknown vendor",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Quillmark Stationers", "vendor_tax_id": "33AAQFQ9876P1Z4",
+        "invoice_number": "QS-311", "invoice_date": "2026-11-02", "due_date": "2026-11-17",
+        "currency": "INR", "po_number": null, "line_count": 2,
+        "subtotal": 6600.0, "tax": 1188.0, "total": 7788.0
+      }
+    },
+    {
+      "file": "07_missing_invoice_number.txt",
+      "title": "Missing invoice number",
+      "decision": "review",
+      "failed_rules": [],
+      "extraction_fails": true,
+      "expected": {
+        "vendor_name": "Orbit Facility Management LLP", "vendor_tax_id": "29AAFFO5678L1Z9",
+        "invoice_number": null, "invoice_date": "2026-11-01", "due_date": "2026-11-30",
+        "currency": "INR", "po_number": null, "line_count": 1,
+        "subtotal": 75000.0, "tax": 13500.0, "total": 88500.0
+      }
+    },
+    {
+      "file": "08_northwind_name_variant.pdf",
+      "title": "Vendor name variant",
+      "decision": "auto_approve",
+      "failed_rules": [],
+      "expected": {
+        "vendor_name": "NORTHWIND OFFICE SUPPLY CO.", "vendor_tax_id": "29ABCDE1234F1Z5",
+        "invoice_number": "NW-2026-0151", "invoice_date": "2026-10-28", "due_date": "2026-11-27",
+        "currency": "INR", "po_number": null, "line_count": 2,
+        "subtotal": 21900.0, "tax": 3942.0, "total": 25842.0
+      }
+    },
+    {
+      "file": "09_saffron_po_exceeded.txt",
+      "title": "Over the PO amount",
+      "decision": "review",
+      "failed_rules": ["matches_purchase_order"],
+      "expected": {
+        "vendor_name": "Saffron Catering Co", "vendor_tax_id": "27AAACS1234K1Z2",
+        "invoice_number": "SC/2026/0951", "invoice_date": "2026-11-04", "due_date": "2026-12-04",
+        "currency": "INR", "po_number": "PO-9012", "line_count": 1,
+        "subtotal": 45000.0, "tax": 2250.0, "total": 47250.0
+      }
+    },
+    {
+      "file": "10_tidewater_bad_dates.txt",
+      "title": "Due before issue date",
+      "decision": "review",
+      "failed_rules": ["dates_are_sane"],
+      "expected": {
+        "vendor_name": "Tidewater Print & Signage Ltd", "vendor_tax_id": "GB123456789",
+        "invoice_number": "TPS-8812", "invoice_date": "2026-10-20", "due_date": "2026-10-10",
+        "currency": "GBP", "po_number": "PO-3300", "line_count": 1,
+        "subtotal": 1450.0, "tax": 290.0, "total": 1740.0
+      }
+    }
+  ]
+}

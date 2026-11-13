@@ -1,0 +1,360 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>invoice-agent</title>
+<meta name="description" content="A LangGraph agent that turns invoices into validated, structured data. The model reads; tested code decides. A project by Nityashree S.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f5f2; --surface:#ffffff; --ink:#0b0b0c; --ink-2:#4a4a48; --ink-3:#7a7a76;
+  --line:#e2e2dc; --line-2:#cfcfc8; --chip:#ecece7;
+  --ok:#24563f; --ok-bg:#e3eee7; --bad:#8f2d22; --bad-bg:#f6e4e1; --warn:#8a4b0f; --warn-bg:#f6ecdf;
+  --font:"Schibsted Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --bg:#0b0b0c; --surface:#151516; --ink:#f5f5f2; --ink-2:#c3c3bd; --ink-3:#8b8b85;
+    --line:#26262a; --line-2:#36363b; --chip:#1e1e21;
+    --ok:#9fd3b6; --ok-bg:#16241d; --bad:#f2a79c; --bad-bg:#2a1714; --warn:#f0b878; --warn-bg:#2a2117;
+  }
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{-webkit-text-size-adjust:100%}
+body{background:var(--bg);color:var(--ink);font-family:var(--font);font-size:15px;line-height:1.55;-webkit-font-smoothing:antialiased}
+a{color:inherit;text-underline-offset:3px}
+code,pre{font-family:var(--mono);font-size:12.5px}
+.wrap{max-width:1120px;margin:0 auto;padding:0 16px}
+header{border-bottom:1px solid var(--line)}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;height:60px}
+.brand{font-weight:700;letter-spacing:-.01em;white-space:nowrap}
+.brand span{color:var(--ink-3);font-weight:500}
+nav{display:flex;gap:18px;font-size:14px;color:var(--ink-2);white-space:nowrap}
+nav a{text-decoration:none} nav a:hover{color:var(--ink);text-decoration:underline}
+.hero{padding:40px 0 18px}
+.eyebrow{font-size:12px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;color:var(--ink-3)}
+h1{font-size:clamp(28px,4.4vw,44px);line-height:1.08;letter-spacing:-.025em;font-weight:700;margin:10px 0 12px;max-width:820px}
+.lede{color:var(--ink-2);max-width:720px;font-size:16px}
+.mode{border-radius:10px;padding:12px 14px;font-size:14px;margin:18px 0 0;background:var(--warn-bg);color:var(--warn)}
+.mode.live{background:var(--ok-bg);color:var(--ok)}
+.grid{display:grid;grid-template-columns:minmax(0,360px) minmax(0,1fr);gap:20px;align-items:start;margin:22px 0 40px}
+.col{display:grid;gap:20px;min-width:0}
+.card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:20px;min-width:0}
+.card h2{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-3);margin-bottom:12px}
+.samples{list-style:none;display:grid;gap:6px}
+.samples button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;font:inherit;font-size:14px;text-align:left;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:9px 12px;cursor:pointer}
+.samples button:hover{border-color:var(--ink)}
+.samples button[aria-pressed="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.samples small{color:var(--ink-3);font-family:var(--mono);font-size:11px;white-space:nowrap}
+.drop{display:block;margin-top:12px;border:1.5px dashed var(--line-2);border-radius:10px;padding:16px;text-align:center;color:var(--ink-2);font-size:14px;cursor:pointer}
+.drop:hover,.drop.over{border-color:var(--ink);color:var(--ink)}
+.drop input{display:none}
+.hint{font-size:12.5px;color:var(--ink-3);margin-top:8px}
+.path{list-style:none}
+.node{position:relative;padding:0 0 14px 26px;color:var(--ink-3)}
+.node:last-child{padding-bottom:0}
+.node::before{content:"";position:absolute;left:6px;top:18px;bottom:0;width:1px;background:var(--line-2)}
+.node:last-child::before{display:none}
+.dot{position:absolute;left:0;top:5px;width:13px;height:13px;border-radius:50%;border:2px solid var(--line-2);background:var(--surface)}
+.node b{font-weight:600;font-size:14px;font-family:var(--mono)}
+.node .what{display:block;font-size:12.5px}
+.node.done{color:var(--ink)} .node.done .dot{background:var(--ink);border-color:var(--ink)}
+.node.wait{color:var(--warn)} .node.wait .dot{border-color:var(--warn);animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 25%,transparent)}}
+.times{font-family:var(--mono);font-size:11px;margin-left:6px;color:var(--ink-3)}
+.seq{margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--ink-2);word-break:break-word}
+.status{border-radius:14px;padding:18px 20px;border:1px solid var(--line)}
+.status.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
+.status.bad{background:var(--bad-bg);color:var(--bad);border-color:transparent}
+.status.wait{background:var(--warn-bg);color:var(--warn);border-color:transparent}
+.status h3{font-size:20px;letter-spacing:-.01em}
+.status ul{margin:8px 0 0 18px;font-size:14px}
+.status .meta{font-size:12.5px;opacity:.85;margin-top:4px}
+.reviewbox{margin-top:14px;display:grid;gap:10px;color:var(--ink)}
+.row{display:flex;flex-wrap:wrap;gap:8px}
+input[type=text],textarea{font:inherit;font-size:14px;color:var(--ink);background:var(--surface);border:1px solid var(--line-2);border-radius:10px;padding:9px 12px;outline:none;width:100%}
+textarea{font-family:var(--mono);font-size:12px;min-height:240px;resize:vertical}
+input:focus,textarea:focus{border-color:var(--ink)}
+.btn{font:inherit;font-weight:600;font-size:14px;background:var(--ink);color:var(--bg);border:1px solid var(--ink);border-radius:10px;padding:9px 16px;cursor:pointer;white-space:nowrap}
+.btn.ghost{background:transparent;color:var(--ink)}
+.btn:disabled{opacity:.5;cursor:wait}
+.rules{list-style:none;display:grid;gap:8px}
+.rule{display:grid;grid-template-columns:52px minmax(0,1fr);gap:10px;align-items:start;font-size:14px}
+.pill{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;text-align:center;border-radius:6px;padding:2px 0}
+.pill.pass{background:var(--ok-bg);color:var(--ok)} .pill.fail{background:var(--bad-bg);color:var(--bad)}
+.rule b{font-family:var(--mono);font-weight:500;font-size:12.5px;display:block}
+.rule span{color:var(--ink-2);font-size:13px}
+.vm{display:flex;align-items:center;gap:10px;font-size:14px;margin-bottom:12px;flex-wrap:wrap}
+.bar{flex:0 0 120px;height:6px;border-radius:3px;background:var(--chip);overflow:hidden}
+.bar i{display:block;height:100%;background:var(--ink)}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:12px;overflow:auto;max-height:460px;white-space:pre}
+details summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-top:12px}
+details pre{margin-top:8px;max-height:300px}
+.empty{color:var(--ink-3);padding:30px 0;text-align:center}
+.err{color:var(--bad);font-size:14px;margin-top:8px}
+footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);font-size:13px}
+@media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)} nav .hide-sm{display:none}}
+@media (max-width:480px){.brand span{display:none} nav{gap:14px}}
+</style>
+</head>
+<body>
+<header><div class="wrap top">
+  <div class="brand">invoice-agent <span>by Nityashree S</span></div>
+  <nav>
+    <a href="https://github.com/Nityaa08/invoice-agent">GitHub</a>
+    <a class="hide-sm" href="/docs">API docs</a>
+    <a href="https://nityashree.in">nityashree.in</a>
+  </nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <div class="eyebrow">LangGraph · structured output · vector match · human in the loop</div>
+    <h1>Invoices in, validated data out. The model reads; tested code decides.</h1>
+    <p class="lede">Pick a synthetic invoice or upload your own. The agent extracts the fields into a strict schema, matches the vendor against a vendor master, runs seven validation rules and either approves the invoice or stops for a human.</p>
+    <div class="mode" id="mode">Loading…</div>
+  </section>
+
+  <div class="grid">
+    <div class="col">
+      <section class="card">
+        <h2>1 · Invoice</h2>
+        <ul class="samples" id="samples"></ul>
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/*">
+          Drop a PDF or text invoice here, or click to choose
+        </label>
+        <p class="hint">Up to 2 MB. Images need the optional OCR extra; without it they go straight to review. Do not upload real invoices to the public demo.</p>
+      </section>
+      <section class="card">
+        <h2>2 · Graph path</h2>
+        <ol class="path" id="path"></ol>
+        <div class="seq" id="seq"></div>
+      </section>
+    </div>
+
+    <div class="col" id="out">
+      <section class="card"><div class="empty">Pick a sample to run the graph.</div></section>
+    </div>
+  </div>
+</main>
+
+<footer><div class="wrap">
+  Synthetic data only: every company, tax id and number in the samples is made up.
+  Source and design notes on <a href="https://github.com/Nityaa08/invoice-agent">GitHub</a> ·
+  <a href="https://nityashree.in">nityashree.in</a>
+</div></footer>
+
+<script>
+const NODES = [
+  ["ingest", "file to text (pypdf; OCR optional)"],
+  ["extract", "LLM → Pydantic Invoice, retried once"],
+  ["match_vendor", "closest vendor in the vector store"],
+  ["validate", "seven pure-Python rules"],
+  ["auto_approve", "every rule passed"],
+  ["human_review", "interrupt() until a reviewer decides"],
+  ["save", "SQLite record + audit log"],
+];
+const STATUS = {
+  auto_approved: ["ok", "Auto-approved", "Every rule passed; saved without a human."],
+  approved_after_correction: ["ok", "Approved after correction", "A reviewer corrected the fields and the rules then passed."],
+  approved_by_reviewer: ["ok", "Approved by reviewer", "A reviewer approved it despite the failed checks."],
+  rejected: ["bad", "Rejected", "A reviewer rejected it. Saved as rejected; it does not count as on file."],
+  needs_review: ["wait", "Needs review", "The graph is paused at human_review."],
+  incomplete: ["bad", "Stopped by an error", "Progress is checkpointed; submit the same file again to resume."],
+};
+
+const S = { config: null, input: null, decisions: [], run: null, busy: false };
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+  return body;
+}
+
+async function init() {
+  S.config = await api("/api/config");
+  const m = $("mode");
+  if (S.config.extractor === "llm") {
+    m.className = "mode live";
+    m.innerHTML = `<b>Live model:</b> ${esc(S.config.llm_model)} extracts the fields; the rules are the same.`;
+  } else {
+    m.innerHTML = `<b>Demo extractor:</b> rules and regex stand in for the LLM (no API key, no cost), so it reads the sample layouts well and other invoices poorly. Everything after extraction is the real graph.` +
+      (S.config.as_of ? ` Dates are checked as of ${esc(S.config.as_of)}.` : "") +
+      (S.config.demo_mode ? ` Nothing is stored: each run lives in one request.` : "");
+  }
+  const samples = await api("/api/samples");
+  $("samples").innerHTML = samples.map((s) => `
+    <li><button type="button" data-file="${esc(s.file)}" aria-pressed="false">
+      <span>${esc(s.title)}</span><small>${s.decision === "auto_approve" ? "expect: approve" : "expect: review"}</small>
+    </button></li>`).join("");
+  $("samples").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-file]");
+    if (b) start({ sample: b.dataset.file });
+  });
+  $("file").addEventListener("change", (e) => e.target.files[0] && start({ file: e.target.files[0] }));
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    if (e.dataTransfer.files[0]) start({ file: e.dataTransfer.files[0] });
+  });
+  renderPath(null);
+}
+
+function start(input) {
+  S.input = input; S.decisions = [];
+  document.querySelectorAll("#samples button").forEach((b) =>
+    b.setAttribute("aria-pressed", String(b.dataset.file === input.sample)));
+  submit();
+}
+
+function form() {
+  const fd = new FormData();
+  if (S.input.file) fd.append("file", S.input.file); else fd.append("sample", S.input.sample);
+  return fd;
+}
+
+async function submit() {
+  setBusy(true);
+  try {
+    let run;
+    if (S.config.demo_mode) {
+      const fd = form(); fd.append("decisions", JSON.stringify(S.decisions));
+      run = await api("/api/demo/run", { method: "POST", body: fd });
+    } else {
+      run = await api("/invoices", { method: "POST", body: form() });
+    }
+    render(run);
+  } catch (err) { showError(err); }
+  setBusy(false);
+}
+
+async function review(decision) {
+  setBusy(true);
+  try {
+    let run;
+    if (S.config.demo_mode) {
+      // Serverless keeps nothing between requests, so the page sends the file
+      // again with every decision so far and the server replays them.
+      const fd = form(); fd.append("decisions", JSON.stringify([...S.decisions, decision]));
+      run = await api("/api/demo/run", { method: "POST", body: fd });
+      S.decisions.push(decision);
+    } else {
+      run = await api(`/invoices/${encodeURIComponent(S.run.id)}/review`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(decision) });
+    }
+    render(run);
+  } catch (err) { showError(err, true); }
+  setBusy(false);
+}
+
+function setBusy(b) {
+  S.busy = b;
+  document.querySelectorAll("button").forEach((x) => (x.disabled = b));
+}
+
+function showError(err, keep) {
+  const box = keep && $("reviewerr");
+  if (box) { box.textContent = err.message; return; }
+  $("out").innerHTML = `<section class="card"><div class="err">${esc(err.message)}</div></section>`;
+}
+
+function renderPath(run) {
+  const path = run ? run.path : [];
+  const waiting = run && run.status === "needs_review";
+  $("path").innerHTML = NODES.map(([name, what]) => {
+    const n = path.filter((p) => p === name).length;
+    const cls = waiting && name === "human_review" ? "wait" : n ? "done" : "";
+    return `<li class="node ${cls}"><span class="dot"></span><b>${name}</b>${n > 1 ? `<span class="times">×${n}</span>` : ""}
+      <span class="what">${esc(waiting && name === "human_review" ? "paused here: waiting for you" : what)}</span></li>`;
+  }).join("");
+  $("seq").textContent = run ? "START → " + path.join(" → ") + (waiting ? " → (interrupt)" : " → END") : "";
+}
+
+function render(run) {
+  S.run = run;
+  renderPath(run);
+  const [cls, title, sub] = STATUS[run.status] || ["", run.status, ""];
+  const req = run.review_request;
+  let html = `<section class="status ${cls}">
+    <h3>${esc(title)}</h3><div class="meta">${esc(sub)} · ${esc(run.filename)} · extractor ${esc(run.extractor)} · run ${esc(run.id)}${run.duplicate_submission ? " · same file as an earlier run, not processed again" : ""}</div>`;
+  if (req) {
+    html += `<ul>${req.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>
+    <div class="reviewbox">
+      <div class="row">
+        <input type="text" id="reviewer" placeholder="Your name" value="reviewer" style="flex:1;min-width:120px">
+        <input type="text" id="note" placeholder="Note (why)" style="flex:2;min-width:160px">
+      </div>
+      <div class="row">
+        ${run.invoice ? `<button class="btn" data-act="approve">Approve anyway</button>` : ""}
+        <button class="btn ghost" data-act="correct">Correct fields…</button>
+        <button class="btn ghost" data-act="reject">Reject</button>
+      </div>
+      <div id="editor" hidden>
+        <textarea id="fix" spellcheck="false"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn" data-act="submit-fix">Save correction and re-validate</button></div>
+      </div>
+      <div class="err" id="reviewerr"></div>
+    </div>`;
+  }
+  html += `</section>`;
+
+  if (run.rules && run.rules.length) {
+    html += `<section class="card"><h2>3 · Validation rules (code, not the model)</h2><ul class="rules">` +
+      run.rules.map((r) => `<li class="rule"><span class="pill ${r.passed ? "pass" : "fail"}">${r.passed ? "pass" : "fail"}</span>
+        <div><b>${esc(r.name)}</b><span>${esc(r.detail)}</span></div></li>`).join("") + `</ul></section>`;
+  }
+
+  html += `<section class="card"><h2>4 · Extracted JSON (Pydantic Invoice)</h2>`;
+  const vm = run.vendor_match;
+  if (vm) {
+    html += `<div class="vm"><span>Vendor match:</span><b>${esc(vm.vendor_name || "none")}</b>
+      <span class="bar"><i style="width:${Math.max(0, Math.min(100, vm.score * 100))}%"></i></span>
+      <code>${vm.score.toFixed(2)}</code><span style="color:var(--ink-3)">${vm.matched ? "known vendor" : "below 0.75, not matched"}</span></div>`;
+  }
+  if (run.invoice) html += `<pre>${esc(JSON.stringify(run.invoice, null, 2))}</pre>`;
+  else html += `<div class="err">${esc(run.ingest_error || run.extraction_error || "No invoice extracted.")}</div>`;
+  if (run.attempts > 1) html += `<p class="hint">Extraction took ${run.attempts} attempts; the schema error from the first was fed back to the second.</p>`;
+  if (run.text) html += `<details><summary>Text the extractor read</summary><pre>${esc(run.text)}</pre></details>`;
+  if (run.audit && run.audit.length) html += `<details><summary>Audit log</summary><pre>${esc(run.audit.map((a) => `${a.at}  ${a.event}  ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => !["at","event"].includes(k))))}`).join("\n"))}</pre></details>`;
+  html += `</section>`;
+  $("out").innerHTML = html;
+
+  if (req) {
+    $("out").querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
+  }
+}
+
+function blankInvoice() {
+  return { vendor_name: "", vendor_tax_id: null, invoice_number: "", invoice_date: "", due_date: null, currency: "",
+    po_number: null, line_items: [{ description: "", quantity: 1, unit_price: 0, amount: 0 }], subtotal: 0, tax: 0, total: 0 };
+}
+
+function act(kind) {
+  const base = { reviewer: $("reviewer").value || "reviewer", note: $("note").value };
+  if (kind === "correct") {
+    const ed = $("editor"); ed.hidden = !ed.hidden;
+    $("fix").value = JSON.stringify(S.run.invoice || { ...blankInvoice(), ...((S.run.review_request || {}).draft || {}) }, null, 2);
+    return;
+  }
+  if (kind === "submit-fix") {
+    let invoice;
+    try { invoice = JSON.parse($("fix").value); } catch (e) { $("reviewerr").textContent = "That is not valid JSON: " + e.message; return; }
+    return review({ ...base, action: "correct", invoice });
+  }
+  review({ ...base, action: kind });
+}
+
+init().catch(showError);
+</script>
+</body>
+</html>
