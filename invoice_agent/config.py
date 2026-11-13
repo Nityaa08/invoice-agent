@@ -39,7 +39,9 @@ class Settings:
 
 
 def load_settings() -> Settings:
-    demo = _flag("DEMO_MODE")
+    # On Vercel (which sets VERCEL=1) default to the stateless demo: its
+    # functions keep no files between requests, so SQLite would not persist.
+    demo = _flag("DEMO_MODE", default=bool(os.getenv("VERCEL")))
     as_of = os.getenv("AS_OF_DATE") or (DEMO_AS_OF if demo else "")
     var = Path(os.getenv("DATA_DIR", ROOT / "var"))
     return Settings(

@@ -145,6 +145,14 @@ def test_demo_rate_limit(demo, monkeypatch):
     assert codes == [200, 200, 429]
 
 
+def test_vercel_defaults_to_demo_mode(monkeypatch):
+    monkeypatch.delenv("DEMO_MODE", raising=False)
+    monkeypatch.setenv("VERCEL", "1")
+    assert load_settings().demo_mode is True
+    monkeypatch.setenv("DEMO_MODE", "false")  # an explicit setting still wins
+    assert load_settings().demo_mode is False
+
+
 def test_main_defines_a_top_level_fastapi_app_for_vercel(monkeypatch, tmp_path):
     # Vercel's FastAPI preset needs `app = FastAPI(...)` written in the entry file itself.
     tree = ast.parse((ROOT / "main.py").read_text())
