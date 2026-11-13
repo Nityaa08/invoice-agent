@@ -63,7 +63,10 @@ def image_to_text(data: bytes) -> str:
             "this is an image and OCR is not installed (pip install pytesseract pillow, "
             "plus the Tesseract binary); a reviewer can enter the fields by hand"
         ) from exc
-    return pytesseract.image_to_string(Image.open(io.BytesIO(data)))
+    try:
+        return pytesseract.image_to_string(Image.open(io.BytesIO(data)))
+    except Exception as exc:  # unreadable image, missing tesseract binary, ...
+        raise IngestError(f"OCR failed ({type(exc).__name__}); a reviewer can enter the fields by hand") from exc
 
 
 def to_text(filename: str, data: bytes) -> str:
