@@ -1,6 +1,6 @@
 # invoice-agent
 
-**Live demo: _link to be added after deploy_** · by [Nityashree S](https://nityashree.in)
+**Live demo: [invoice-agent-nityashree.vercel.app](https://invoice-agent-nityashree.vercel.app)** (demo mode: rule-based extractor, no API key) · by [Nityashree S](https://nityashree.in)
 
 > A LangGraph agent that turns an invoice (PDF, image or text) into validated, structured data ready for accounts payable. **The model reads; tested code decides.** An LLM fills a strict Pydantic schema, a small vector store matches the vendor, seven plain-Python rules check the numbers, and anything that fails stops for a human via LangGraph's `interrupt()` before it is saved.
 
