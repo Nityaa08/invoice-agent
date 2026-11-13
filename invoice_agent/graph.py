@@ -48,6 +48,7 @@ class InvoiceState(TypedDict, total=False):
     attempts: int
     extraction_error: str | None
     invoice: dict[str, Any] | None
+    draft: dict[str, Any] | None  # partial extractor output that failed the schema
     vendor_match: dict[str, Any] | None
     rules: list[dict[str, Any]]
     review: dict[str, Any] | None  # the reviewer's last decision
@@ -92,6 +93,7 @@ def build_graph(deps: Deps):
 
     def extract(state: InvoiceState) -> dict:
         attempt = state.get("attempts", 0) + 1
+        raw = None
         try:
             raw = deps.extractor.extract(state["text"], feedback=state.get("extraction_error"))
             invoice = Invoice.model_validate(raw)
@@ -99,7 +101,9 @@ def build_graph(deps: Deps):
             errors = "; ".join(
                 f"{'.'.join(str(p) for p in e['loc']) or 'output'}: {e['msg']}" for e in exc.errors()
             )
-            return {"attempts": attempt, "extraction_error": errors, "path": ["extract"]}
+            # Keep the partial output so a reviewer fixes one field instead of typing all of them.
+            draft = raw if isinstance(raw, dict) else state.get("draft")
+            return {"attempts": attempt, "extraction_error": errors, "draft": draft, "path": ["extract"]}
         except ExtractionError as exc:
             return {"attempts": attempt, "extraction_error": str(exc), "path": ["extract"]}
         return {
@@ -139,6 +143,7 @@ def build_graph(deps: Deps):
         decision = interrupt({
             "reasons": review_reasons(state),
             "invoice": state.get("invoice"),
+            "draft": state.get("draft"),
             "vendor_match": state.get("vendor_match"),
             "actions": list(REVIEW_ACTIONS),
         })

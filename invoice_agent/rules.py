@@ -116,7 +116,8 @@ def line_items_sum_to_subtotal(invoice: Invoice, ctx: RuleContext) -> RuleResult
             False,
             f"line items add up to {lines} but the subtotal says {money(invoice.subtotal)} (off by {diff})",
         )
-    return RuleResult("line_items_sum_to_subtotal", True, f"{len(invoice.line_items)} lines add up to {lines}")
+    n = len(invoice.line_items)
+    return RuleResult("line_items_sum_to_subtotal", True, f"{n} line{'s' if n > 1 else ''} add{'' if n > 1 else 's'} up to {lines}")
 
 
 def subtotal_plus_tax_equals_total(invoice: Invoice, ctx: RuleContext) -> RuleResult:

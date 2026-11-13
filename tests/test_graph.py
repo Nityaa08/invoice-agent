@@ -6,7 +6,7 @@ from datetime import date
 import pytest
 
 from invoice_agent.config import load_settings
-from invoice_agent.extractors import DemoExtractor, ExtractionError
+from invoice_agent.extractors import ExtractionError
 from invoice_agent.graph import MAX_EXTRACT_ATTEMPTS
 from invoice_agent.service import InvoiceService, NotAwaitingReview, RunNotFound
 
@@ -134,11 +134,13 @@ def test_gives_up_after_max_attempts_and_asks_a_human(settings, sample_bytes):
     assert run["path"] == ["ingest"] + ["extract"] * MAX_EXTRACT_ATTEMPTS
     assert run["invoice"] is None
     assert "invoice_number" in run["review_request"]["reasons"][0]
+    draft = run["review_request"]["draft"]  # partial output, so the reviewer only adds what is missing
+    assert draft["vendor_name"] == "Orbit Facility Management LLP" and "invoice_number" not in draft
 
     with pytest.raises(ValueError, match="nothing to approve"):
         svc.review(run["id"], {"action": "approve"})
 
-    typed_in = DemoExtractor().extract(run["text"]) | {"invoice_number": "OFM/26/402"}
+    typed_in = draft | {"invoice_number": "OFM/26/402"}
     done = svc.review(run["id"], {"action": "correct", "invoice": typed_in, "reviewer": "asha"})
     assert done["status"] == "approved_after_correction"
     assert done["vendor_match"]["vendor_id"] == "V006"
