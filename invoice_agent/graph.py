@@ -29,7 +29,7 @@ from pydantic import ValidationError
 from typing_extensions import TypedDict
 
 from . import ingest as ingest_mod
-from .extractors import ExtractionError, Extractor
+from .extractors import NOTES_KEY, ExtractionError, Extractor
 from .rules import PurchaseOrder, RuleContext, VendorMatch, duplicate_key, run_rules
 from .schema import Invoice
 from .store import InvoiceStore
@@ -46,9 +46,11 @@ class InvoiceState(TypedDict, total=False):
     text: str
     ingest_error: str | None
     attempts: int
-    extraction_error: str | None
+    extraction_error: str | None  # for people: "could not find invoice date on the invoice"
+    model_feedback: str | None  # for the model's retry: the exact schema errors
     invoice: dict[str, Any] | None
     draft: dict[str, Any] | None  # partial extractor output that failed the schema
+    extraction_notes: list[str]  # what the extractor had to approximate; forces a review
     vendor_match: dict[str, Any] | None
     rules: list[dict[str, Any]]
     review: dict[str, Any] | None  # the reviewer's last decision
@@ -72,12 +74,40 @@ def _match_from_state(state: InvoiceState) -> VendorMatch:
     return VendorMatch(m.get("vendor_id"), m.get("vendor_name"), m.get("score", 0.0))
 
 
+FIELD_LABELS = {
+    "vendor_name": "vendor name", "vendor_tax_id": "vendor tax id", "invoice_number": "invoice number",
+    "invoice_date": "invoice date", "due_date": "due date", "currency": "currency", "po_number": "PO number",
+    "line_items": "line items", "subtotal": "subtotal", "tax": "tax", "total": "total",
+}
+
+
+def describe_schema_errors(exc: ValidationError) -> str:
+    """Pydantic errors in words a reviewer understands: 'could not find invoice date on the invoice'."""
+    missing, other = [], []
+    for e in exc.errors():
+        loc = [str(p) for p in e["loc"]]
+        field = FIELD_LABELS.get(loc[0], ".".join(loc)) if loc else "output"
+        if e["type"] == "missing" and len(loc) == 1:
+            missing.append(field)
+        elif loc[:1] == ["line_items"] and e["type"] == "too_short":
+            missing.append("line items")
+        else:
+            other.append(f"{'.'.join(loc) or 'output'}: {e['msg']}")
+    parts = []
+    if missing:
+        parts.append("could not find " + ", ".join(missing) + " on the invoice")
+    return "; ".join(parts + other)
+
+
 def review_reasons(state: InvoiceState) -> list[str]:
-    """Why a human has to look: the ingest error, the extraction error, or failed rules."""
+    """Why a human has to look: the ingest error, the extraction error, or failed checks."""
     if state.get("ingest_error"):
         return [f"could not read the file: {state['ingest_error']}"]
     if state.get("invoice") is None:
-        return [f"extraction failed after {state.get('attempts', 0)} attempts: {state.get('extraction_error')}"]
+        tries = state.get("attempts", 0)
+        after = f" after {tries} attempts" if tries > 1 else ""
+        return [f"extraction incomplete{after}: {state.get('extraction_error')}. "
+                "Use 'Correct fields' to fill in what is missing."]
     return [f"{r['name']}: {r['detail']}" for r in state.get("rules", []) if not r["passed"]]
 
 
@@ -93,23 +123,28 @@ def build_graph(deps: Deps):
 
     def extract(state: InvoiceState) -> dict:
         attempt = state.get("attempts", 0) + 1
-        raw = None
+        raw, notes = None, []
         try:
-            raw = deps.extractor.extract(state["text"], feedback=state.get("extraction_error"))
+            raw = deps.extractor.extract(state["text"], feedback=state.get("model_feedback"))
+            if isinstance(raw, dict) and NOTES_KEY in raw:
+                raw = dict(raw)
+                notes = [str(n) for n in raw.pop(NOTES_KEY) or []]
             invoice = Invoice.model_validate(raw)
         except ValidationError as exc:
-            errors = "; ".join(
-                f"{'.'.join(str(p) for p in e['loc']) or 'output'}: {e['msg']}" for e in exc.errors()
-            )
             # Keep the partial output so a reviewer fixes one field instead of typing all of them.
             draft = raw if isinstance(raw, dict) else state.get("draft")
-            return {"attempts": attempt, "extraction_error": errors, "draft": draft, "path": ["extract"]}
+            exact = "; ".join(f"{'.'.join(str(p) for p in e['loc']) or 'output'}: {e['msg']}" for e in exc.errors())
+            return {"attempts": attempt, "extraction_error": describe_schema_errors(exc), "model_feedback": exact,
+                    "draft": draft, "extraction_notes": notes, "path": ["extract"]}
         except ExtractionError as exc:
-            return {"attempts": attempt, "extraction_error": str(exc), "path": ["extract"]}
+            return {"attempts": attempt, "extraction_error": str(exc), "model_feedback": str(exc),
+                    "path": ["extract"]}
         return {
             "attempts": attempt,
             "extraction_error": None,
+            "model_feedback": None,
             "invoice": invoice.model_dump(mode="json"),
+            "extraction_notes": notes,
             "path": ["extract"],
         }
 
@@ -128,8 +163,13 @@ def build_graph(deps: Deps):
             seen_invoices=deps.store.seen_invoices(),
             purchase_orders=deps.purchase_orders,
         )
-        results = run_rules(Invoice.model_validate(state["invoice"]), ctx)
-        return {"rules": [r.__dict__ for r in results], "path": ["validate"]}
+        results = [r.__dict__ for r in run_rules(Invoice.model_validate(state["invoice"]), ctx)]
+        # Anything the extractor approximated is a failed check, so a human confirms it.
+        # A reviewer's correction replaces the extracted fields, so the notes no longer apply.
+        notes = [] if (state.get("review") or {}).get("action") == "correct" else state.get("extraction_notes") or []
+        if notes:
+            results.append({"name": "extraction_is_complete", "passed": False, "detail": "; ".join(notes)})
+        return {"rules": results, "path": ["validate"]}
 
     def auto_approve(state: InvoiceState) -> dict:
         corrected = (state.get("review") or {}).get("action") == "correct"
@@ -177,7 +217,8 @@ def build_graph(deps: Deps):
     def after_extract(state: InvoiceState) -> Literal["match_vendor", "extract", "human_review"]:
         if state.get("extraction_error") is None:
             return "match_vendor"
-        if state.get("attempts", 0) < MAX_EXTRACT_ATTEMPTS:
+        # A deterministic extractor (the demo rules) would return the same thing again.
+        if state.get("attempts", 0) < MAX_EXTRACT_ATTEMPTS and not getattr(deps.extractor, "deterministic", False):
             return "extract"
         return "human_review"
 

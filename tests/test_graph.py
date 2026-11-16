@@ -120,6 +120,17 @@ def test_retry_once_on_schema_failure_with_error_fed_back(settings, sample_bytes
     assert "invoice_number: Field required" in extractor.feedback[1]
 
 
+def test_a_model_gets_max_attempts_then_a_human_sees_the_fields_in_words(settings):
+    bad = dict(GOOD)
+    del bad["invoice_date"]
+    extractor = ScriptedExtractor(*[bad] * MAX_EXTRACT_ATTEMPTS)
+    run, _ = service(settings, extractor).submit("x.txt", b"some invoice text")
+    assert run["path"] == ["ingest"] + ["extract"] * MAX_EXTRACT_ATTEMPTS
+    assert "invoice_date: Field required" in extractor.feedback[1]  # the model gets the exact error
+    reason = run["review_request"]["reasons"][0]  # the reviewer gets words
+    assert f"after {MAX_EXTRACT_ATTEMPTS} attempts: could not find invoice date on the invoice" in reason
+
+
 def test_retry_on_non_json_model_output(settings):
     extractor = ScriptedExtractor(ExtractionError("model returned output that is not JSON"), GOOD)
     run, _ = service(settings, extractor).submit("x.txt", b"some invoice text")
@@ -131,9 +142,10 @@ def test_gives_up_after_max_attempts_and_asks_a_human(settings, sample_bytes):
     svc = service(settings)  # demo extractor cannot find the missing number
     run, _ = svc.submit("07.txt", sample_bytes("07_missing_invoice_number.txt"))
     assert run["status"] == "needs_review"
-    assert run["path"] == ["ingest"] + ["extract"] * MAX_EXTRACT_ATTEMPTS
+    # The demo extractor is deterministic, so the graph does not retry it.
+    assert run["path"] == ["ingest", "extract"]
     assert run["invoice"] is None
-    assert "invoice_number" in run["review_request"]["reasons"][0]
+    assert "could not find invoice number on the invoice" in run["review_request"]["reasons"][0]
     draft = run["review_request"]["draft"]  # partial output, so the reviewer only adds what is missing
     assert draft["vendor_name"] == "Orbit Facility Management LLP" and "invoice_number" not in draft
 
