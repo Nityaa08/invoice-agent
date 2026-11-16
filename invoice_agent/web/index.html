@@ -96,6 +96,10 @@ details summary{cursor:pointer;font-size:13px;color:var(--ink-2);margin-top:12px
 details pre{margin-top:8px;max-height:300px}
 .empty{color:var(--ink-3);padding:30px 0;text-align:center}
 .err{color:var(--bad);font-size:14px;margin-top:8px}
+.notice{border-radius:10px;padding:12px 14px;font-size:14px;background:var(--bad-bg);color:var(--bad)}
+.notice b{display:block;margin-bottom:2px}
+.notice.warn{background:var(--warn-bg);color:var(--warn)}
+.uperr{margin-top:10px}
 footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);font-size:13px}
 @media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)} nav .hide-sm{display:none}}
 @media (max-width:480px){.brand span{display:none} nav{gap:14px}}
@@ -128,7 +132,8 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
           <input type="file" id="file" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/*">
           Drop a PDF or text invoice here, or click to choose
         </label>
-        <p class="hint">Up to 2 MB. Images need the optional OCR extra; without it they go straight to review. Do not upload real invoices to the public demo.</p>
+        <div class="uperr" id="uperr" role="alert" aria-live="polite"></div>
+        <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word). Scanned PDFs and photos need OCR, which this demo does not run. Do not upload invoices with personal data to the public demo.</p>
       </section>
       <section class="card">
         <h2>2 · Graph path</h2>
@@ -172,11 +177,46 @@ const S = { config: null, input: null, decisions: [], run: null, busy: false };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
+const HTTP_MESSAGES = {
+  413: "The file is too large for the demo.",
+  429: "The demo limit for your connection is reached; try again in an hour.",
+  500: "The server hit an error while reading this file.",
+  502: "The server is not responding right now; try again in a minute.",
+  504: "The server took too long to process this file; try a smaller PDF.",
+};
+
 async function api(url, opts) {
-  const res = await fetch(url, opts);
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.detail || `HTTP ${res.status}`);
+  let res;
+  try { res = await fetch(url, opts); }
+  catch (e) { throw new Error("Could not reach the server. Check your connection and try again."); }
+  const body = await res.json().catch(() => null);
+  if (!res.ok) {
+    // FastAPI sends {detail: "..."} or {detail: [{msg: ...}]}; Vercel's own limits send plain text.
+    let msg = body && body.detail;
+    if (Array.isArray(msg)) msg = msg.map((d) => d.msg || JSON.stringify(d)).join("; ");
+    throw new Error(msg ? String(msg) : (HTTP_MESSAGES[res.status] || `The server answered HTTP ${res.status}.`));
+  }
+  if (body === null) throw new Error("The server sent an answer that is not JSON.");
   return body;
+}
+
+const ACCEPTED = /\.(pdf|txt|png|jpe?g)$/i;
+function maxBytes() { return ((S.config && S.config.max_upload_mb) || 4) * 1024 * 1024; }
+
+function checkFile(f) {
+  const mb = (f.size / 1024 / 1024).toFixed(1);
+  const limit = (S.config && S.config.max_upload_mb) || 4;
+  if (!f.size) return "This file is empty.";
+  if (f.size > maxBytes()) return `This file is ${mb} MB; the demo accepts files up to ${limit} MB (Vercel caps uploads at 4.5 MB). Invoices exported as PDF are usually under 1 MB; a large file is often a scan, which the demo cannot read anyway.`;
+  if (!ACCEPTED.test(f.name) && !/^(application\/pdf|text\/plain|image\/(png|jpeg))$/.test(f.type)) return `"${f.name}" is not a PDF. Upload a PDF (or a .txt, .png or .jpg).`;
+  return null;
+}
+
+function pickFile(f) {
+  $("uperr").innerHTML = "";
+  const problem = checkFile(f);
+  if (problem) { $("uperr").innerHTML = `<div class="notice"><b>Not uploaded</b>${esc(problem)}</div>`; return; }
+  start({ file: f });
 }
 
 async function init() {
@@ -186,8 +226,8 @@ async function init() {
     m.className = "mode live";
     m.innerHTML = `<b>Live model:</b> ${esc(S.config.llm_model)} extracts the fields; the rules are the same.`;
   } else {
-    m.innerHTML = `<b>Demo extractor:</b> rules and regex stand in for the LLM (no API key, no cost), so it reads the sample layouts well and other invoices poorly. Everything after extraction is the real graph.` +
-      (S.config.as_of ? ` Dates are checked as of ${esc(S.config.as_of)}.` : "") +
+    m.innerHTML = `<b>Demo extractor:</b> layout rules and regex stand in for the LLM (no API key, no cost). It reads common text-layer invoices (GST tax invoices, US and EU layouts) and sends anything it cannot read fully to a human instead of guessing. Everything after extraction is the real graph.` +
+      (S.config.as_of ? ` Sample dates are checked as of ${esc(S.config.as_of)}${S.config.as_of_uploads === "today" ? "; uploads as of today" : ""}.` : "") +
       (S.config.demo_mode ? ` Nothing is stored: each run lives in one request.` : "");
   }
   const samples = await api("/api/samples");
@@ -199,19 +239,25 @@ async function init() {
     const b = e.target.closest("button[data-file]");
     if (b) start({ sample: b.dataset.file });
   });
-  $("file").addEventListener("change", (e) => e.target.files[0] && start({ file: e.target.files[0] }));
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";  // so choosing the same file again fires "change" again
+    if (f) pickFile(f);
+  });
   const drop = $("drop");
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => {
     e.preventDefault(); drop.classList.remove("over");
-    if (e.dataTransfer.files[0]) start({ file: e.dataTransfer.files[0] });
+    if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
   });
+  $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB. ` + $("uphint").textContent;
   renderPath(null);
 }
 
 function start(input) {
   S.input = input; S.decisions = [];
+  if (input.sample) $("uperr").innerHTML = "";
   document.querySelectorAll("#samples button").forEach((b) =>
     b.setAttribute("aria-pressed", String(b.dataset.file === input.sample)));
   submit();
@@ -321,8 +367,13 @@ function render(run) {
       <span class="bar"><i style="width:${Math.max(0, Math.min(100, vm.score * 100))}%"></i></span>
       <code>${vm.score.toFixed(2)}</code><span style="color:var(--ink-3)">${vm.matched ? "known vendor" : "below 0.75, not matched"}</span></div>`;
   }
+  const draft = req && req.draft;
   if (run.invoice) html += `<pre>${esc(JSON.stringify(run.invoice, null, 2))}</pre>`;
-  else html += `<div class="err">${esc(run.ingest_error || run.extraction_error || "No invoice extracted.")}</div>`;
+  else if (run.ingest_error) html += `<div class="notice"><b>Could not read this file</b>${esc(cap(run.ingest_error))}</div>`;
+  else {
+    html += `<div class="notice warn"><b>Some fields could not be read</b>${esc(cap(run.extraction_error || "No invoice extracted."))}. Use “Correct fields…” to fill them in; the rules then run as normal.</div>`;
+    if (draft) html += `<p class="hint">What the extractor did read:</p><pre>${esc(JSON.stringify(draft, null, 2))}</pre>`;
+  }
   if (run.attempts > 1) html += `<p class="hint">Extraction took ${run.attempts} attempts; the schema error from the first was fed back to the second.</p>`;
   if (run.text) html += `<details><summary>Text the extractor read</summary><pre>${esc(run.text)}</pre></details>`;
   if (run.audit && run.audit.length) html += `<details><summary>Audit log</summary><pre>${esc(run.audit.map((a) => `${a.at}  ${a.event}  ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => !["at","event"].includes(k))))}`).join("\n"))}</pre></details>`;
@@ -334,6 +385,8 @@ function render(run) {
   }
 }
 
+function cap(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+
 function blankInvoice() {
   return { vendor_name: "", vendor_tax_id: null, invoice_number: "", invoice_date: "", due_date: null, currency: "",
     po_number: null, line_items: [{ description: "", quantity: 1, unit_price: 0, amount: 0 }], subtotal: 0, tax: 0, total: 0 };
@@ -343,7 +396,9 @@ function act(kind) {
   const base = { reviewer: $("reviewer").value || "reviewer", note: $("note").value };
   if (kind === "correct") {
     const ed = $("editor"); ed.hidden = !ed.hidden;
-    $("fix").value = JSON.stringify(S.run.invoice || { ...blankInvoice(), ...((S.run.review_request || {}).draft || {}) }, null, 2);
+    const draft = Object.fromEntries(Object.entries((S.run.review_request || {}).draft || {})
+      .filter(([k, v]) => v !== null && !(Array.isArray(v) && !v.length)));
+    $("fix").value = JSON.stringify(S.run.invoice || { ...blankInvoice(), ...draft }, null, 2);
     return;
   }
   if (kind === "submit-fix") {
