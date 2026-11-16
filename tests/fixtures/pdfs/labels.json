@@ -1,0 +1,86 @@
+{
+  "_about": "Hand labels for the real-world-style PDFs made by scripts/make_test_pdfs.py. All companies are made up and none is in the vendor master, so every one goes to review with vendor_is_known failed; that is the correct outcome for a first invoice from a new supplier. Dates are checked as of 2026-11-16. These files were written while fixing the demo extractor, so they are a regression set, not a blind held-out set.",
+  "as_of": "2026-11-16",
+  "invoices": [
+    {
+      "file": "gst_tax_invoice.pdf",
+      "title": "Indian GST tax invoice (Tally-style boxes, CGST + SGST, lakh grouping, rupee sign)",
+      "decision": "review",
+      "failed_rules": ["matches_purchase_order", "vendor_is_known"],
+      "expected": {
+        "vendor_name": "Sri Lakshmi Traders Pvt. Ltd.", "vendor_tax_id": "33AAKCS1234M1Z9",
+        "invoice_number": "SLT/2026-27/0457", "invoice_date": "2026-11-14", "due_date": null,
+        "currency": "INR", "po_number": "PO-8812", "line_count": 2,
+        "subtotal": 116100.0, "tax": 20898.0, "total": 136998.0
+      }
+    },
+    {
+      "file": "gst_igst_bill.pdf",
+      "title": "Interstate GST bill from a web app (Bill No, IGST, Rs., Balance Due)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Kaveri Digital Services LLP", "vendor_tax_id": "29AAQFK4321L1ZP",
+        "invoice_number": "KDS/1124", "invoice_date": "2026-11-12", "due_date": "2026-11-27",
+        "currency": "INR", "po_number": null, "line_count": 3,
+        "subtotal": 190000.0, "tax": 34200.0, "total": 224200.0
+      }
+    },
+    {
+      "file": "us_invoice.pdf",
+      "title": "US invoice (Inv #, MM/DD/YYYY, sales tax, Balance Due)",
+      "decision": "review",
+      "failed_rules": ["matches_purchase_order", "vendor_is_known"],
+      "expected": {
+        "vendor_name": "Granite Peak Consulting LLC", "vendor_tax_id": "84-1234567",
+        "invoice_number": "GPC-2026-0311", "invoice_date": "2026-11-03", "due_date": "2026-12-03",
+        "currency": "USD", "po_number": "PO-7790", "line_count": 3,
+        "subtotal": 7212.5, "tax": 34.8, "total": 7247.3
+      }
+    },
+    {
+      "file": "eu_invoice.pdf",
+      "title": "Dutch invoice (Invoice number, DD.MM.YYYY, 1.234,56, VAT 21 %, Amount due)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Van der Berg Logistiek B.V.", "vendor_tax_id": "NL812345678B01",
+        "invoice_number": "2026-00873", "invoice_date": "2026-11-03", "due_date": "2026-12-03",
+        "currency": "EUR", "po_number": null, "line_count": 3,
+        "subtotal": 2525.0, "tax": 530.25, "total": 3055.25
+      }
+    },
+    {
+      "file": "multipage_invoice.pdf",
+      "title": "Three-page invoice, 90 lines, totals on the last page",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Harbor Industrial Supply Co.", "vendor_tax_id": null,
+        "invoice_number": "HIS-55021", "invoice_date": "2026-11-02", "due_date": "2026-12-02",
+        "currency": "USD", "po_number": null, "line_count": 90,
+        "subtotal": 5879.0, "tax": 426.23, "total": 6305.23
+      }
+    },
+    {
+      "file": "services_invoice.pdf",
+      "title": "Freelancer invoice in prose (no table): a single total-only line, flagged",
+      "decision": "review",
+      "failed_rules": ["extraction_is_complete", "vendor_is_known"],
+      "expected": {
+        "vendor_name": "Meera Iyer Design Studio", "vendor_tax_id": null,
+        "invoice_number": "MI-0093", "invoice_date": "2026-11-10", "due_date": null,
+        "currency": "INR", "po_number": null, "line_count": 1,
+        "subtotal": 85000.0, "tax": 0.0, "total": 85000.0
+      }
+    },
+    {
+      "file": "scanned_invoice.pdf",
+      "title": "Scanned (image-only) PDF: no text layer, so no extraction",
+      "decision": "review",
+      "failed_rules": [],
+      "extraction_fails": true,
+      "expected": {}
+    }
+  ]
+}

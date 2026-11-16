@@ -1,0 +1,42 @@
+{
+  "_about": "Written after the demo extractor was frozen and run once, unchanged, on 2026-11-16: 1 of 3 invoices read fully (and that one with the wrong vendor name, 10 of 11 fields); the other 2 went to review because the invoice number or date was not found. Nothing was approved wrongly. The misses (labels such as Tax Point / Your Order / Amount Owing, CA$, spaced VAT numbers, a header in parentheses, a table header without an amount column) were then fixed, so this set is no longer blind; it is kept as a regression set. All companies are made up. Tax ids are labelled without spaces. Dates are checked as of 2026-11-16.",
+  "as_of": "2026-11-16",
+  "invoices": [
+    {
+      "file": "blind_uk_invoice.pdf",
+      "title": "UK sales invoice (Invoice Ref, Tax Point / Date, 5th November 2026, pounds, Invoice Total)",
+      "decision": "review",
+      "failed_rules": ["matches_purchase_order", "vendor_is_known"],
+      "expected": {
+        "vendor_name": "Thistle & Pine Joinery Ltd", "vendor_tax_id": "GB284193762",
+        "invoice_number": "TPJ-4471", "invoice_date": "2026-11-05", "due_date": null,
+        "currency": "GBP", "po_number": "PO-3300", "line_count": 2,
+        "subtotal": 2110.0, "tax": 422.0, "total": 2532.0
+      }
+    },
+    {
+      "file": "blind_gst_hsn_summary.pdf",
+      "title": "GST invoice with an HSN-wise tax summary under the totals",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Aravind Agro Foods", "vendor_tax_id": "33BXKPA7788Q1ZC",
+        "invoice_number": "AAF/26-27/219", "invoice_date": "2026-11-05", "due_date": "2026-11-20",
+        "currency": "INR", "po_number": null, "line_count": 2,
+        "subtotal": 38800.0, "tax": 1940.0, "total": 40740.0
+      }
+    },
+    {
+      "file": "blind_canada_invoice.pdf",
+      "title": "Canadian invoice (CA$, HST, Amount Owing)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Northern Lights Print Shop Inc.", "vendor_tax_id": "812345678RT0001",
+        "invoice_number": "NLP-90017", "invoice_date": "2026-11-09", "due_date": "2026-12-09",
+        "currency": "CAD", "po_number": null, "line_count": 2,
+        "subtotal": 309.99, "tax": 40.3, "total": 350.29
+      }
+    }
+  ]
+}
