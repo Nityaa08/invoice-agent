@@ -18,3 +18,18 @@ def test_field_comparison():
     assert not same("total", None, 0.0)
     assert same("vendor_name", " Acme ", "Acme")
     assert same("po_number", None, None)
+
+
+def test_realworld_eval_meets_the_labels():
+    report = evaluate("realworld")
+    assert report["invoices"] == 7
+    assert report["decision_accuracy"] == 1.0
+    assert report["failed_rules_exact_match"] == 1.0
+    assert report["field_accuracy"] == 1.0
+
+
+def test_blind_eval_meets_the_labels():
+    report = evaluate("blind")
+    assert report["invoices"] == 3
+    assert report["decision_accuracy"] == 1.0
+    assert report["field_accuracy"] == 1.0

@@ -46,10 +46,10 @@ flowchart TD
 
 | Node | What it does | Code |
 |---|---|---|
-| `ingest` | PDF text via pypdf (layout mode keeps table columns apart); plain text as is; images only if the optional OCR extra is installed | [`ingest.py`](invoice_agent/ingest.py) |
-| `extract` | Extractor output validated with `Invoice.model_validate`. On failure the error is fed back and it retries once | [`graph.py`](invoice_agent/graph.py), [`extractors.py`](invoice_agent/extractors.py) |
+| `ingest` | PDF text via pypdf (layout mode keeps table columns apart); plain text as is; images only if the optional OCR extra is installed. Scanned, damaged, password-protected and not-really-PDF files get a plain-language message and go to a human | [`ingest.py`](invoice_agent/ingest.py) |
+| `extract` | Extractor output validated with `Invoice.model_validate`. On failure the exact error is fed back to the model and it retries once (the deterministic demo extractor is not retried); the reviewer sees the same failure in words ("could not find invoice date on the invoice") | [`graph.py`](invoice_agent/graph.py), [`extractors.py`](invoice_agent/extractors.py) |
 | `match_vendor` | Embeds the printed vendor name and returns the closest vendor-master entry and its cosine score | [`vendors.py`](invoice_agent/vendors.py) |
-| `validate` | Runs the seven rules; no short-circuit, so a reviewer sees every problem at once | [`rules.py`](invoice_agent/rules.py) |
+| `validate` | Runs the seven rules; no short-circuit, so a reviewer sees every problem at once. If the extractor had to approximate something (for example it could not read the line-item table), that is added as a failed `extraction_is_complete` check, so a human confirms it | [`rules.py`](invoice_agent/rules.py) |
 | `auto_approve` / `human_review` | Conditional edge on the rule results. `human_review` calls `interrupt()` with the reasons; `Command(resume=decision)` continues it | [`graph.py`](invoice_agent/graph.py) |
 | `save` | Upserts the record into SQLite and writes the audit log; approved invoices join the duplicate ledger | [`store.py`](invoice_agent/store.py) |
 
@@ -77,7 +77,7 @@ flowchart TD
 
 **Why a vector match for vendors.** Vendor names are printed inconsistently: "NORTHWIND OFFICE SUPPLY CO." for "Northwind Office Supplies Pvt Ltd". Exact lookup misses these. Asking an LLM "is this the same company?" is slow, costs money and is not repeatable. Embedding the names and taking the nearest neighbour gives a score that can be thresholded and tested. The embedder here hashes character 3-grams into a 1,024-dimension vector: no model download, no key, deterministic, about a millisecond. It measures spelling similarity, not meaning, which is what vendor names need. The store sits behind a two-method `VectorStore` interface (`add`, `query`), so Chroma, pgvector or FAISS can replace the in-memory NumPy store without touching the graph.
 
-**Why a demo extractor.** Tests, CI, the eval and the public demo all run without an API key. The demo extractor is regular expressions and layout rules written for the sample invoices; it is a stand-in for the model, not a general invoice reader. The real model plugs in through LangChain's `ChatOpenAI(...).with_structured_output(Invoice, method="json_schema", include_raw=True)` against any OpenAI-compatible API, with the same schema.
+**Why a demo extractor.** Tests, CI, the eval and the public demo all run without an API key. The demo extractor is layout rules and regular expressions; it is a stand-in for the model, not a general invoice reader. It never guesses: a field it cannot find is left empty and the invoice goes to a human with the reason. The real model plugs in through LangChain's `ChatOpenAI(...).with_structured_output(Invoice, method="json_schema", include_raw=True)` against any OpenAI-compatible API, with the same schema.
 
 ## Run it
 
@@ -128,30 +128,54 @@ curl -X POST http://127.0.0.1:8000/invoices/<id>/review \
 | `POST /api/demo/run` | Demo mode only: one stateless run; see below |
 | `GET /api/samples`, `/api/config`, `/api/health` | For the page |
 
+## What the demo extractor reads
+
+Uploads to the public demo use the demo extractor, so it has to cope with invoices that look nothing like the samples. It reads PDFs that have a text layer (exported from accounting software, a browser, Word or a PDF printer) and:
+
+| | Handled |
+|---|---|
+| Layouts | label and value side by side, in two columns, or the label above its value (Tally-style boxes); bordered and borderless tables; totals blocks on the right; multi-page invoices (line items on every page, totals on the last; the first 9 pages and the last one are read) |
+| Labels | Invoice No. / Invoice # / Inv # / Invoice Ref / Bill No / Invoice:; Invoice Date / Dated / Date of issue / Tax Point; Due Date / Payment due; PO / P.O. # / Buyer's Order No. / Your Order; Sub Total / Taxable Value / Total excl. VAT / Net Total; CGST / SGST / IGST / VAT / Sales Tax / HST; Grand Total / Invoice Total / Total; Amount Due / Balance Due / Amount Owing |
+| Numbers | `1,234.56`, `1.234,56` (decided once per document), Indian lakh grouping `1,23,456.00`; `₹`, `Rs.`, `INR`, `$`, `US$`, `CA$`, `€`, `£` |
+| Dates | `2026-11-14`, `14-Nov-2026`, `14 Nov 2026`, `2nd November, 2026`, `November 2, 2026`, `14.11.2026`, `14/11/2026`, `11/14/2026` (month first on US-dollar invoices, unless a part over 12 says otherwise), two-digit years |
+| Tax ids | GSTIN (the seller's, the first one printed), EU VAT numbers including spaced ones, US EIN, Canadian GST/HST numbers |
+
+What happens when it cannot read something:
+
+- **A field is missing** (no invoice number, no date, no total): the invoice goes to review with "could not find invoice date on the invoice"; the page shows what it did read, and "Correct fields" pre-fills it.
+- **Line items cannot be read as a table** (a prose invoice, an unusual layout): one "Invoice total (line items not itemised)" line carries the subtotal, and the failed `extraction_is_complete` check sends it to review.
+- **A scanned PDF** (no text layer, or only a scanner watermark): "This PDF is a scanned image. The demo reads PDFs with a text layer; OCR is listed as a next step." Nothing is extracted.
+- **Not a PDF, damaged, password-protected, empty, or over 4 MB**: a plain message; the page checks the size and type before uploading.
+
+A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not have these layout limits.
+
 ## Tests
 
 ```bash
 python -m pytest
 ```
 
-128 tests, no network or API key needed, about 3 seconds. They passed on 2026-11-13.
+186 tests, no network or API key needed, about 3 seconds. They passed on 2026-11-16.
 
 | File | What it covers |
 |---|---|
 | `test_rules.py` (42) | Every rule, table-driven: tolerances, float-safe money, date edge cases, duplicate normalization, PO vendor/currency/amount; schema rejects malformed output |
-| `test_graph.py` (15) | Every path: happy path; interrupt then approve, reject, correct; a correction that still fails pauses again; retry with the error fed back; giving up after two attempts; unreadable files; duplicates; idempotent resubmission; **resume a review after a restart** (SQLite checkpointer); **resume a crashed run** |
+| `test_graph.py` (16) | Every path: happy path; interrupt then approve, reject, correct; a correction that still fails pauses again; retry with the error fed back; giving up after two attempts, with the missing fields in words; unreadable files; duplicates; idempotent resubmission; **resume a review after a restart** (SQLite checkpointer); **resume a crashed run** |
 | `test_api.py` (16) | Upload, get, review, idempotent 200, 404/409/413/422, the stateless demo with replayed decisions, rate limit, Vercel defaults, and that `main.py` has a top-level `app = FastAPI(...)` |
 | `test_vendors.py` (15) | Embedder determinism, store contract, name variants matched, unknown names below threshold |
 | `test_extract_ingest.py` (29) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor, ingest errors |
 | `test_llm_extractor.py` (5) | The real LangChain `ChatOpenAI` path with the HTTP call faked: the schema is sent as `response_format`, answers are parsed, schema errors and HTTP errors are handled, feedback reaches the model |
-| `test_store.py` (4), `test_eval.py` (2) | Store idempotency and ledger; the eval itself runs in CI |
+| `test_real_world_pdfs.py` (55) | Uploads through `/api/demo/run` with Vercel's settings: an Indian GST tax invoice (CGST + SGST, lakh grouping, labels above values), an IGST bill, a US, an EU and a three-page invoice, a prose invoice (total-only fallback), a scanned PDF (the clear message), truncated / not-a-PDF / Word / unknown files, an oversize and an empty upload; label synonyms, number and date formats; upload dates checked against today; `EXTRACTOR=llm` reading an upload; a missing key falling back to the demo |
+| `test_store.py` (4), `test_eval.py` (4) | Store idempotency and ledger; the eval on all three sets runs in CI |
 
 CI runs the suite on Python 3.11, 3.12 and 3.13 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
 ## Eval
 
 ```bash
-python evals/run_eval.py --markdown
+python evals/run_eval.py --markdown                 # the ten samples
+python evals/run_eval.py --set realworld --markdown # real-world-style PDFs
+python evals/run_eval.py --set blind --markdown     # three PDFs written after the extractor was frozen
 # with a real model:
 EXTRACTOR=llm LLM_API_KEY=... python evals/run_eval.py --markdown
 ```
@@ -168,7 +192,11 @@ Demo extractor, 2026-11-13:
 | Sent to review | 6 of 10 (all six broken on purpose) |
 | Mean time per invoice | about 20 ms |
 
-**Read these numbers honestly.** The demo extractor was written against these same ten invoices, so 100% field accuracy shows the pipeline is wired correctly, not that it reads invoices well. A held-out set and a real-model run are the next step; the eval already supports both (`EXTRACTOR=llm`). The decision numbers mean more: given the extracted fields, the rules and the graph send every invoice down the right path. The missing-number invoice is excluded from field accuracy (there is no invoice to score) and counted in decision accuracy.
+**Read these numbers honestly.** The demo extractor was written against these same ten invoices, so 100% field accuracy shows the pipeline is wired correctly, not that it reads invoices well. The decision numbers mean more: given the extracted fields, the rules and the graph send every invoice down the right path. The missing-number invoice is excluded from field accuracy (there is no invoice to score) and counted in decision accuracy.
+
+**Real-world-style PDFs** ([`tests/fixtures/pdfs/`](tests/fixtures/pdfs/), made by [`scripts/make_test_pdfs.py`](scripts/make_test_pdfs.py), labels in `labels.json`). On 2026-11-16 the original demo extractor read **none** of the six text-layer invoices: every one stopped with the schema error and no invoice. After the fixes it reads all six (100% of 66 fields) and sends the scan to review with the scan message; all seven go to review, correctly, because none of the made-up vendors is in the vendor master. These PDFs were written while fixing the extractor, so they are a regression set, not a measure of accuracy on unseen invoices.
+
+**Blind set** (`blind_labels.json`). Three more PDFs (a UK, a Canadian and a GST invoice with an HSN tax summary) were written after the extractor was frozen and run once, unchanged: 1 of 3 read fully (with the wrong vendor name, 10 of 11 fields); the other two went to review because the invoice number or date was not found. Nothing was approved wrongly. The misses were then fixed, so this set is now a regression set too (100%). That first run is the honest number for unseen layouts: the demo extractor fails safe, but it misses often. A real model and a larger, truly held-out set of real invoices are the next step.
 
 ## The samples
 
@@ -195,8 +223,9 @@ The public demo runs in **demo mode**, because Vercel's Python functions keep no
 
 - `POST /api/demo/run` does a whole run in memory inside one request (an `InMemorySaver` checkpointer and an in-memory store, fresh each time; visitors never see each other's data).
 - Human review stays within the page session: the page keeps the file and sends it again with every decision so far, and the server replays the run and resumes the interrupt with each decision. The demo extractor is deterministic, so the replay reaches the same pause.
-- Dates are checked as of 2026-11-13 so the samples do not go stale.
-- 60 runs per hour per visitor (per instance), 2 MB uploads.
+- The samples' dates are checked as of 2026-11-13 so they do not go stale; uploaded invoices are checked against today (unless `AS_OF_DATE` is set), so a real invoice dated this week is not "in the future".
+- 60 runs per hour per visitor (per instance), 4 MB uploads (Vercel caps a function's request body at 4.5 MB; the page checks the size before sending).
+- Each demo run logs one INFO line (upload or sample, size, file extension) and, if it goes to review, why; no file names or contents. These show in Vercel's runtime logs.
 - `main.py` defines `app = FastAPI(...)` at the top level, which is what Vercel's FastAPI preset looks for. A test checks this.
 - Installed dependencies are about 140 MB, under the 500 MB function limit; `vercel.json` keeps tests, evals and scripts out of the bundle.
 
@@ -212,13 +241,14 @@ For the full service with persistence, run `uvicorn main:app` on any VM or conta
 
 ## Limits
 
-- **The demo extractor only reads layouts like the samples.** Real invoices need `EXTRACTOR=llm`. The real-model path is tested with a faked HTTP response, not yet evaluated against a live model.
-- **The eval set is small and not held out** (see above). Ten invoices show each path works; they do not measure extraction quality.
-- **OCR is optional and minimal.** Images and scanned PDFs need `pytesseract` and the Tesseract binary; without them they go straight to a human.
+- **The demo extractor reads common text-layer layouts, not every invoice.** On a first, blind run it fully read 1 of 3 unseen layouts (see Eval); what it cannot read goes to a human with the reason, it does not guess. Real invoices at volume need `EXTRACTOR=llm`. The real-model path, including uploads, is tested with a faked HTTP response, not yet evaluated against a live model.
+- **The eval sets are small and not truly held out** (see above). They show each path works; they do not measure extraction quality on real invoices.
+- **No OCR in the demo.** Scanned PDFs and photos have no text layer; the demo says so and sends them to a human. Locally, images can be read with the optional `pytesseract` + Tesseract; scanned PDFs need OCR (for example rendering pages and running Tesseract, or a vision model), which is the next step.
+- **Uploads are limited to 4 MB and the first 9 pages plus the last.**
 - **The vendor embedder compares spelling, not meaning.** "Blue Peak Cloud" scores 0.63 against "Bluepeak Cloud Services Inc" and goes to review. That fails safe, but it means more reviews; a learned embedder or a tax-id check would catch more.
 - **Money uses floats in the schema** (what LLM JSON gives you) and `Decimal` cents in every comparison.
 - **No authentication** on the full service, and the demo rate limit is per instance. Fine for a demo; a real deployment needs auth and a shared limiter.
-- **Single currency per invoice**, no partial payments, no multi-page line-item tables beyond what pypdf reads in order.
+- **Single currency per invoice**, no partial payments, no credit notes or discounts; line items whose quantity x price does not match the printed amount (discount columns) are not read as items.
 
 ## Project layout
 
@@ -238,9 +268,10 @@ invoice_agent/
   web/index.html            the one-page demo UI
 data/                       vendor master, purchase orders, paid invoices (all fictional)
 samples/                    10 synthetic invoices + manifest.json (hand labels)
-evals/run_eval.py           field and decision accuracy
+evals/run_eval.py           field and decision accuracy (samples, real-world-style, blind sets)
 scripts/make_samples.py     regenerates the sample invoices
-tests/                      128 pytest tests
+scripts/make_test_pdfs.py   regenerates the real-world-style test PDFs (reportlab + Playwright)
+tests/                      186 pytest tests; tests/fixtures/pdfs/ holds the test PDFs and their labels
 ```
 
 ## Licence

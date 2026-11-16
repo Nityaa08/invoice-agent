@@ -13,6 +13,13 @@ With a real model (any OpenAI-compatible API; Groq has a free tier):
     EXTRACTOR=llm LLM_API_KEY=... LLM_MODEL=openai/gpt-oss-20b python evals/run_eval.py
     # other providers: also set LLM_BASE_URL, e.g. https://api.openai.com/v1
 
+Two sets:
+    --set samples    the ten synthetic samples in samples/ (default)
+    --set realworld  the real-world-style PDFs in tests/fixtures/pdfs/
+                     (GST, US, EU, multi-page, prose, scanned; labels.json)
+    --set blind      three more PDFs written after the extractor was frozen
+                     (blind_labels.json); the honest number
+
 Add --markdown to print a table for the README, --out FILE to save JSON.
 """
 
@@ -23,6 +30,8 @@ import json
 import os
 import sys
 import time
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -44,16 +53,29 @@ def same(field: str, got, want) -> bool:
     return got == want
 
 
-def evaluate() -> dict:
-    os.environ.setdefault("AS_OF_DATE", DEMO_AS_OF)  # the samples are dated Oct/Nov 2026
-    settings = load_settings()
-    manifest = json.loads((SAMPLES_DIR / "manifest.json").read_text(encoding="utf-8"))["samples"]
+SETS = {
+    # name: (folder, labels file, key holding the list)
+    "samples": (SAMPLES_DIR, SAMPLES_DIR / "manifest.json", "samples"),
+    "realworld": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "labels.json", "invoices"),
+    "blind": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "blind_labels.json", "invoices"),
+}
+
+
+def evaluate(which: str = "samples") -> dict:
+    folder, labels_path, key = SETS[which]
+    labels = json.loads(labels_path.read_text(encoding="utf-8"))
+    # The invoices are dated Oct/Nov 2026; check them as of a fixed day so they do not go stale.
+    # AS_OF_DATE in the environment still wins. Nothing is written back to os.environ,
+    # so evaluating one set does not change the date used for the next.
+    as_of = os.environ.get("AS_OF_DATE") or labels.get("as_of", DEMO_AS_OF)
+    settings = replace(load_settings(), as_of=date.fromisoformat(as_of), as_of_from_env=True)
+    manifest = labels[key]
     rows, field_hits, field_total = [], {f: 0 for f in FIELDS}, 0
 
     for sample in manifest:
         service = InvoiceService.ephemeral(settings)  # fresh ledger per invoice: no cross-talk
         started = time.perf_counter()
-        run, _ = service.submit(sample["file"], (SAMPLES_DIR / sample["file"]).read_bytes())
+        run, _ = service.submit(sample["file"], (folder / sample["file"]).read_bytes())
         seconds = time.perf_counter() - started
 
         decision = "auto_approve" if run["status"] == "auto_approved" else "review"
@@ -87,6 +109,7 @@ def evaluate() -> dict:
     n = len(rows)
     all_fields = sum(field_hits.values())
     return {
+        "set": which,
         "extractor": InvoiceService.ephemeral(settings).deps.extractor.name,
         "as_of": settings.as_of.isoformat() if settings.as_of else None,
         "invoices": n,
@@ -103,7 +126,7 @@ def evaluate() -> dict:
 
 def markdown(report: dict) -> str:
     lines = [
-        f"Extractor `{report['extractor']}`, {report['invoices']} invoices, dates as of {report['as_of']}.",
+        f"Set `{report['set']}`, extractor `{report['extractor']}`, {report['invoices']} invoices, dates as of {report['as_of']}.",
         "",
         "| Metric | Result |",
         "|---|---|",
@@ -126,10 +149,11 @@ def markdown(report: dict) -> str:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    parser.add_argument("--set", choices=sorted(SETS), default="samples", help="which labelled set to run")
     parser.add_argument("--markdown", action="store_true", help="print a Markdown table")
     parser.add_argument("--out", help="write the full JSON report here")
     args = parser.parse_args()
-    report = evaluate()
+    report = evaluate(args.set)
     if args.out:
         Path(args.out).write_text(json.dumps(report, indent=2), encoding="utf-8")
     if args.markdown:
