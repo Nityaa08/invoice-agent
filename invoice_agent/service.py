@@ -80,9 +80,15 @@ class InvoiceService:
     def _deps(settings: Settings, store: InvoiceStore, extractor: Extractor | None) -> Deps:
         store.seed_ledger(load_paid_invoices())
         as_of = settings.as_of
+        provider = settings.extractor
+        if provider == "llm" and not settings.llm_api_key:
+            # A missing key on a deployment should not turn every upload into a 500;
+            # /api/config already reports the demo extractor in this case.
+            log.warning("EXTRACTOR=llm but LLM_API_KEY is empty; using the demo extractor")
+            provider = "demo"
         return Deps(
             extractor=extractor or build_extractor(
-                settings.extractor, model=settings.llm_model, api_key=settings.llm_api_key,
+                provider, model=settings.llm_model, api_key=settings.llm_api_key,
                 base_url=settings.llm_base_url, method=settings.llm_method,
             ),
             matcher=default_matcher(),

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from invoice_agent.api import register_routes
 from invoice_agent.config import load_settings
+from invoice_agent.ingest import MAX_UPLOAD_BYTES
 
 from .conftest import ROOT
 
@@ -39,7 +40,8 @@ def test_page_config_and_samples(full):
     assert full.get("/").status_code == 200
     assert "invoice-agent" in full.get("/").text
     assert full.get("/api/config").json() == {
-        "demo_mode": False, "extractor": "demo", "llm_model": None, "as_of": "2026-11-13"
+        "demo_mode": False, "extractor": "demo", "llm_model": None, "as_of": "2026-11-13",
+        "as_of_uploads": "2026-11-13", "max_upload_mb": 4,
     }
     samples = full.get("/api/samples").json()
     assert len(samples) == 10 and samples[0]["file"] == "01_northwind_ok.pdf"
@@ -89,7 +91,7 @@ def test_review_with_correction(full):
         (lambda c: c.post("/invoices/nope/review", json={"action": "approve"}), 404),
         (lambda c: c.post("/invoices"), 422),
         (lambda c: c.post("/invoices", data={"sample": "secret.txt"}), 404),
-        (lambda c: c.post("/invoices", files={"file": ("big.txt", b"x" * (2 * 1024 * 1024 + 1))}), 413),
+        (lambda c: c.post("/invoices", files={"file": ("big.txt", b"x" * (MAX_UPLOAD_BYTES + 1))}), 413),
         (lambda c: c.post("/api/demo/run", data={"sample": "01_northwind_ok.pdf"}), 404),  # demo off
     ],
 )

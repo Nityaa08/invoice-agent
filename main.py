@@ -5,11 +5,16 @@ Vercel's FastAPI preset looks for a top-level `app = FastAPI(...)` in main.py
 than imported from a factory. DEMO_MODE only decides which routes it gets.
 """
 
+import logging
+
 from fastapi import FastAPI
 
 from invoice_agent.api import register_routes
 from invoice_agent.config import load_settings
 
+# INFO lines (what kind of file each demo run got, why it went to review) show
+# up in the Vercel runtime logs; no file contents or names are logged.
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 settings = load_settings()
 
 app = FastAPI(

@@ -12,8 +12,9 @@ DATA_DIR = ROOT / "data"
 SAMPLES_DIR = ROOT / "samples"
 
 # The sample invoices are dated October/November 2026. The public demo checks
-# dates "as of" this day so the samples do not go stale; the full service
-# uses the real date unless AS_OF_DATE is set.
+# the samples' dates "as of" this day so they do not go stale; uploaded files
+# are checked against the real date (an invoice dated today must not look
+# "in the future"). The full service uses the real date unless AS_OF_DATE is set.
 DEMO_AS_OF = "2026-11-13"
 
 
@@ -32,6 +33,7 @@ class Settings:
     db_path: str
     checkpoint_path: str
     as_of: date | None
+    as_of_from_env: bool = False  # AS_OF_DATE was set: use it for uploads too
 
     @property
     def llm_configured(self) -> bool:
@@ -42,7 +44,8 @@ def load_settings() -> Settings:
     # On Vercel (which sets VERCEL=1) default to the stateless demo: its
     # functions keep no files between requests, so SQLite would not persist.
     demo = _flag("DEMO_MODE", default=bool(os.getenv("VERCEL")))
-    as_of = os.getenv("AS_OF_DATE") or (DEMO_AS_OF if demo else "")
+    explicit = os.getenv("AS_OF_DATE", "").strip()
+    as_of = explicit or (DEMO_AS_OF if demo else "")
     var = Path(os.getenv("DATA_DIR", ROOT / "var"))
     return Settings(
         demo_mode=demo,
@@ -54,4 +57,5 @@ def load_settings() -> Settings:
         db_path=os.getenv("DB_PATH", str(var / "invoices.db")),
         checkpoint_path=os.getenv("CHECKPOINT_PATH", str(var / "checkpoints.db")),
         as_of=date.fromisoformat(as_of) if as_of else None,
+        as_of_from_env=bool(explicit),
     )

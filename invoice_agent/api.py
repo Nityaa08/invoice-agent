@@ -17,9 +17,11 @@ Both: GET / (page), GET /api/config, GET /api/samples, GET /api/samples/{file}, 
 from __future__ import annotations
 
 import json
+import logging
 import threading
 import time
 from collections import defaultdict, deque
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -28,9 +30,10 @@ from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 from .config import SAMPLES_DIR, Settings
-from .ingest import MAX_UPLOAD_BYTES
+from .ingest import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 from .service import InvoiceService, NotAwaitingReview, RunNotFound
 
+log = logging.getLogger(__name__)
 WEB_DIR = Path(__file__).resolve().parent / "web"
 MAX_DEMO_DECISIONS = 5
 DEMO_RUNS_PER_HOUR = 60
@@ -58,7 +61,9 @@ async def _read_input(file: UploadFile | None, sample: str | None) -> tuple[str,
     if file is not None and file.filename:
         data = await file.read(MAX_UPLOAD_BYTES + 1)
         if len(data) > MAX_UPLOAD_BYTES:
-            raise HTTPException(413, f"file is larger than {MAX_UPLOAD_BYTES // (1024 * 1024)} MB")
+            raise HTTPException(413, f"the file is larger than {MAX_UPLOAD_MB} MB, the upload limit of this demo")
+        if not data:
+            raise HTTPException(422, "the file is empty")
         return file.filename, data
     if sample:
         path = _sample_path(sample)
@@ -102,6 +107,10 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
             "extractor": "llm" if settings.llm_configured else "demo",
             "llm_model": settings.llm_model if settings.llm_configured else None,
             "as_of": settings.as_of.isoformat() if settings.as_of else None,
+            # In the demo the fixed date applies to the samples only; uploads use today.
+            "as_of_uploads": (settings.as_of.isoformat() if settings.as_of_from_env and settings.as_of
+                              else None if not settings.demo_mode else "today"),
+            "max_upload_mb": MAX_UPLOAD_MB,
         }
 
     @app.get("/api/samples")
@@ -164,10 +173,17 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
         if len(steps) > MAX_DEMO_DECISIONS:
             raise HTTPException(422, f"at most {MAX_DEMO_DECISIONS} review decisions")
         filename, data = await _read_input(file, sample)
+        uploaded = not (sample and (file is None or not file.filename))
+        log.info("demo run: %s, %d bytes, %s", "upload" if uploaded else "sample", len(data),
+                 filename.rsplit(".", 1)[-1].lower() if "." in filename else "no extension")
 
         # A fresh in-memory service per request: nothing is shared between visitors.
-        service = InvoiceService.ephemeral(settings)
+        # The fixed demo date keeps the samples fresh; a real upload is checked against today.
+        run_settings = replace(settings, as_of=None) if uploaded and not settings.as_of_from_env else settings
+        service = InvoiceService.ephemeral(run_settings)
         run, _ = service.submit(filename, data)
+        if run.get("ingest_error") or run.get("extraction_error"):
+            log.info("demo run %s needs review: %s", run["id"], run.get("ingest_error") or run.get("extraction_error"))
         for step in steps:
             if run["status"] != "needs_review":
                 break

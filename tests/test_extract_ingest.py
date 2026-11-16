@@ -3,7 +3,7 @@
 import pytest
 
 from invoice_agent.extractors import DemoExtractor, build_extractor, parse_amount, parse_date
-from invoice_agent.ingest import IngestError, sniff_kind, to_text
+from invoice_agent.ingest import MAX_UPLOAD_BYTES, IngestError, sniff_kind, to_text
 from invoice_agent.schema import Invoice
 
 
@@ -88,9 +88,9 @@ def test_sniff_kind_uses_bytes_first(name, data, kind):
     "name, data, message",
     [
         ("a.txt", b"", "empty"),
-        ("a.txt", b"x" * (2 * 1024 * 1024 + 1), "larger"),
+        ("a.txt", b"x" * (MAX_UPLOAD_BYTES + 1), "larger"),
         ("a.bin", b"\xff\xfe\x00\x81", "unsupported"),
-        ("a.pdf", b"%PDF-1.4 not really a pdf", "PDF"),
+        ("a.pdf", b"%PDF-1.4 not really a pdf", "could not be read as a PDF"),
         ("a.txt", b"   \n  ", "no text"),
     ],
 )
