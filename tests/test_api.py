@@ -39,12 +39,14 @@ def demo(monkeypatch, tmp_path):
 def test_page_config_and_samples(full):
     assert full.get("/").status_code == 200
     assert "invoice-agent" in full.get("/").text
-    assert full.get("/api/config").json() == {
+    cfg = full.get("/api/config").json()
+    assert cfg.pop("rules")[:2] == ["line_items_sum_to_subtotal", "subtotal_plus_tax_equals_total"]
+    assert cfg == {
         "demo_mode": False, "extractor": "demo", "llm_model": None, "as_of": "2026-11-13",
         "as_of_uploads": "2026-11-13", "max_upload_mb": 4,
     }
     samples = full.get("/api/samples").json()
-    assert len(samples) == 10 and samples[0]["file"] == "01_northwind_ok.pdf"
+    assert len(samples) == 11 and samples[0]["file"] == "01_northwind_ok.pdf"
     assert full.get("/api/samples/01_northwind_ok.pdf").content.startswith(b"%PDF")
     assert full.get("/api/samples/..%2Fmain.py").status_code == 404
 
