@@ -10,11 +10,13 @@ Money is compared in Decimal cents to avoid float surprises.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from datetime import date, timedelta
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_HALF_UP, Decimal, localcontext
 
 from .schema import Invoice
+from .textguard import fold, instructions, lookalikes
 
 # Rounding allowed when comparing printed amounts (one cent / one paisa per
 # comparison, plus a little for per-line rounding on long invoices).
@@ -25,6 +27,11 @@ MAX_INVOICE_AGE_DAYS = 365
 MAX_PAYMENT_TERMS_DAYS = 120
 # Cosine similarity needed to treat a vendor as known.
 VENDOR_MATCH_THRESHOLD = 0.75
+# Above this an amount is a typo or an attack, not an invoice (in any currency;
+# 10 billion covers large JPY or IDR invoices). A person looks.
+MAX_INVOICE_TOTAL = Decimal("10000000000")
+# GST tops out at 28% (+ cess), VAT at 27% (Hungary). Above this, tax was tampered with.
+MAX_TAX_RATE_PERCENT = Decimal("30")
 
 # Active ISO 4217 currency codes (list maintained by SIX; checked 2026-11).
 ISO_4217 = frozenset(
@@ -62,6 +69,7 @@ class VendorMatch:
     vendor_id: str | None
     vendor_name: str | None
     score: float
+    tax_id: str | None = None  # the vendor master's GSTIN / VAT number, if it has one
 
     @property
     def matched(self) -> bool:
@@ -75,21 +83,28 @@ class RuleContext:
     # (vendor key, invoice number) pairs already on file. See duplicate_key().
     seen_invoices: frozenset[tuple[str, str]] = frozenset()
     purchase_orders: dict[str, PurchaseOrder] = field(default_factory=dict)
+    # Totals already approved against each PO (normalized PO number -> amount),
+    # so a PO cannot be overspent by splitting the bill across invoices.
+    po_spent: dict[str, Decimal] = field(default_factory=dict)
+    # The text the extractor read, for the checks that look at the whole document.
+    document_text: str = ""
 
 
 def money(value: float) -> Decimal:
-    """Float from the model -> Decimal rounded to cents."""
-    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    """Float from the model -> Decimal rounded to cents (enough precision for any schema-valid amount)."""
+    with localcontext() as c:
+        c.prec = 40
+        return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 def normalize_id(value: str) -> str:
-    """Invoice and PO numbers: case and spacing should not hide a duplicate."""
-    return "".join(value.upper().split())
+    """Invoice and PO numbers: case, spacing and lookalike characters should not hide a duplicate."""
+    return "".join(fold(value).upper().split())
 
 
 def duplicate_key(invoice: Invoice, match: VendorMatch) -> tuple[str, str]:
     """Who sent it + their invoice number. Unknown vendors fall back to the name."""
-    vendor = match.vendor_id if match.matched else "name:" + " ".join(invoice.vendor_name.lower().split())
+    vendor = match.vendor_id if match.matched else "name:" + " ".join(fold(invoice.vendor_name).lower().split())
     return (vendor, normalize_id(invoice.invoice_number))
 
 
@@ -121,16 +136,77 @@ def line_items_sum_to_subtotal(invoice: Invoice, ctx: RuleContext) -> RuleResult
 
 
 def subtotal_plus_tax_equals_total(invoice: Invoice, ctx: RuleContext) -> RuleResult:
-    expected = money(invoice.subtotal) + money(invoice.tax)
+    discount = money(invoice.discount)
+    expected = money(invoice.subtotal) - discount + money(invoice.tax)
+    less = f" - discount {discount}" if discount else ""
     diff = money(invoice.total) - expected
     if abs(diff) > MONEY_TOLERANCE:
         return RuleResult(
             "subtotal_plus_tax_equals_total",
             False,
-            f"subtotal {money(invoice.subtotal)} + tax {money(invoice.tax)} = {expected}, "
+            f"subtotal {money(invoice.subtotal)}{less} + tax {money(invoice.tax)} = {expected}, "
             f"but the total says {money(invoice.total)} (off by {diff})",
         )
-    return RuleResult("subtotal_plus_tax_equals_total", True, f"{expected} matches the total")
+    return RuleResult("subtotal_plus_tax_equals_total", True,
+                      f"subtotal {money(invoice.subtotal)}{less} + tax {money(invoice.tax)} = {expected}, matches the total")
+
+
+def _taxable(invoice: Invoice) -> Decimal:
+    return money(invoice.subtotal) - money(invoice.discount)
+
+
+def tax_rate_is_consistent(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """The tax must be the printed rate of the taxable amount, and no rate may be implausibly high."""
+    name = "tax_rate_is_consistent"
+    base, tax = _taxable(invoice), money(invoice.tax)
+    if invoice.tax_rate is not None:
+        rate = Decimal(str(invoice.tax_rate)).normalize()
+        rate = Decimal(f"{rate:f}")  # 18.0 -> 18, and never 2E+1
+        if rate > MAX_TAX_RATE_PERCENT:
+            return RuleResult(name, False, f"a tax rate of {rate}% is above {MAX_TAX_RATE_PERCENT}%, higher than any GST or VAT rate")
+        expected = (base * rate / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        # Each tax line is rounded on its own (CGST + SGST): allow a few cents, or 0.5% of the tax.
+        allowed = max(Decimal("0.05"), expected * Decimal("0.005"))
+        if abs(tax - expected) <= allowed:
+            return RuleResult(name, True, f"{rate}% of {base} = {expected}, matches the tax")
+        taxed = _taxed_lines(invoice, rate, tax)
+        if taxed:
+            return RuleResult(name, True, f"{rate}% of {taxed[1]} (taxed lines: {', '.join(taxed[0])}) matches the tax")
+        return RuleResult(name, False, f"the invoice prints a tax rate of {rate}%, which is {expected} on "
+                                       f"{base}, but the tax charged is {tax}")
+    if base > 0 and tax * 100 / base > MAX_TAX_RATE_PERCENT:
+        pct = (tax * 100 / base).quantize(Decimal("0.1"))
+        return RuleResult(name, False, f"tax {tax} is {pct}% of {base}; above {MAX_TAX_RATE_PERCENT}% is higher than any GST or VAT rate")
+    return RuleResult(name, True, "no rate printed; tax is within the normal range" if tax else "no tax charged")
+
+
+def _taxed_lines(invoice: Invoice, rate: Decimal, tax: Decimal) -> tuple[list[str], Decimal] | None:
+    """US sales tax often applies to some lines only. Find lines whose sum at `rate` gives `tax`."""
+    if money(invoice.discount) or not 1 < len(invoice.line_items) <= 12:
+        return None
+    from itertools import combinations
+
+    items = invoice.line_items
+    for size in range(1, len(items)):
+        for combo in combinations(items, size):
+            part = sum((money(i.amount) for i in combo), Decimal("0"))
+            if abs((part * rate / 100).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP) - tax) <= Decimal("0.01"):
+                return [i.description for i in combo], part
+    return None
+
+
+def amounts_are_plausible(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """Zero, absurdly large, or discount-larger-than-the-bill: a person should look."""
+    total, problems = money(invoice.total), []
+    if total <= 0:
+        problems.append("the total is zero; nothing to pay, so this is probably a mistake or a credit note")
+    if total > MAX_INVOICE_TOTAL or money(invoice.subtotal) > MAX_INVOICE_TOTAL:
+        problems.append(f"amounts above {MAX_INVOICE_TOTAL:,} are not accepted without a person checking them")
+    if money(invoice.discount) > money(invoice.subtotal):
+        problems.append(f"the discount {money(invoice.discount)} is larger than the subtotal {money(invoice.subtotal)}")
+    if problems:
+        return RuleResult("amounts_are_plausible", False, "; ".join(problems))
+    return RuleResult("amounts_are_plausible", True, f"total {total} {invoice.currency} is within the normal range")
 
 
 def dates_are_sane(invoice: Invoice, ctx: RuleContext) -> RuleResult:
@@ -171,6 +247,47 @@ def vendor_is_known(invoice: Invoice, ctx: RuleContext) -> RuleResult:
     )
 
 
+_GSTIN = re.compile(r"^(?:0[1-9]|[1-3]\d)[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$")
+_EU_PREFIXES = {"AT", "BE", "BG", "CY", "CZ", "DE", "DK", "EE", "EL", "ES", "FI", "FR", "HR", "HU", "IE", "IT",
+                "LT", "LU", "LV", "MT", "NL", "PL", "PT", "RO", "SE", "SI", "SK", "XI", "CHE", "NO"}
+
+
+def tax_id_problem(tax_id: str) -> str | None:
+    """Why `tax_id` is not a well-formed GSTIN / UK or EU VAT number / EIN / Canadian BN, or None."""
+    t = re.sub(r"[\s.]", "", tax_id).upper()
+    if re.match(r"^\d{2}[A-Z]", t):
+        return None if _GSTIN.match(t) else (
+            f"{tax_id} looks like a GSTIN but is not in the 15-character GSTIN format (e.g. 29ABCDE1234F1Z5)")
+    if t.startswith("GB"):
+        return None if re.fullmatch(r"GB(?:\d{9}|\d{12}|GD\d{3}|HA\d{3})", t) else (
+            f"{tax_id} is not a valid UK VAT number (GB + 9 or 12 digits)")
+    prefix = next((p for p in sorted(_EU_PREFIXES, key=len, reverse=True) if t.startswith(p)), None)
+    if prefix:
+        return None if re.fullmatch(rf"{prefix}[0-9A-Z+*]{{2,12}}", t) and re.search(r"\d{2}", t) else (
+            f"{tax_id} is not a valid {prefix} VAT number")
+    if re.fullmatch(r"\d{2}-\d{7}", t) or re.fullmatch(r"\d{9}(?:[A-Z]{2}\d{4})?", t):
+        return None  # US EIN, Canadian business number
+    if re.fullmatch(r"[A-Z0-9\-/]{6,20}", t) and re.search(r"\d{4}", t):
+        return None  # another country's format; not checked further
+    return f"{tax_id} does not look like a tax registration number"
+
+
+def vendor_tax_id_is_valid(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """A printed tax id must be well formed, and must be the known vendor's own id."""
+    name, printed, m = "vendor_tax_id_is_valid", invoice.vendor_tax_id, ctx.vendor_match
+    if not printed:
+        if m.matched and m.tax_id:
+            return RuleResult(name, False, f"no tax id on the invoice, but {m.vendor_name} is registered as {m.tax_id}")
+        return RuleResult(name, True, "no tax id printed (not required for this vendor)")
+    problem = tax_id_problem(printed)
+    if problem:
+        return RuleResult(name, False, problem)
+    if m.matched and m.tax_id and normalize_id(printed) != normalize_id(m.tax_id):
+        return RuleResult(name, False, f"the invoice says tax id {printed}, but {m.vendor_name} is registered as "
+                                       f"{m.tax_id}; the name may be borrowed by someone else")
+    return RuleResult(name, True, f"{printed} is well formed" + (" and matches the vendor master" if m.matched and m.tax_id else ""))
+
+
 def not_a_duplicate(invoice: Invoice, ctx: RuleContext) -> RuleResult:
     key = duplicate_key(invoice, ctx.vendor_match)
     if key in ctx.seen_invoices:
@@ -193,23 +310,62 @@ def matches_purchase_order(invoice: Invoice, ctx: RuleContext) -> RuleResult:
         problems.append(f"PO {po.po_number} belongs to a different vendor")
     if po.currency != invoice.currency:
         problems.append(f"PO is in {po.currency}, invoice is in {invoice.currency}")
+    spent = ctx.po_spent.get(normalize_id(po.po_number), Decimal("0"))
+    left = money(po.amount) - spent
     if money(invoice.total) > money(po.amount) + MONEY_TOLERANCE:
         problems.append(f"invoice total {money(invoice.total)} exceeds the PO amount {money(po.amount)}")
+    elif money(invoice.total) > left + MONEY_TOLERANCE:
+        problems.append(f"invoice total {money(invoice.total)} exceeds what is left on the PO: {money(po.amount)} "
+                        f"minus {spent} already approved = {left}")
     if problems:
         return RuleResult("matches_purchase_order", False, "; ".join(problems))
+    used = f", {spent} already approved" if spent else ""
     return RuleResult(
-        "matches_purchase_order", True, f"within PO {po.po_number} ({po.currency} {money(po.amount)})"
+        "matches_purchase_order", True, f"within PO {po.po_number} ({po.currency} {money(po.amount)}{used})"
     )
+
+
+def no_lookalike_characters(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """Vendor name and ids must not hide Cyrillic/Greek lookalikes, foreign digits or invisible characters."""
+    found = []
+    for label, value in (("vendor name", invoice.vendor_name), ("invoice number", invoice.invoice_number),
+                         ("PO number", invoice.po_number), ("tax id", invoice.vendor_tax_id)):
+        hits = lookalikes(value or "")
+        if hits:
+            found.append(f"{label} contains " + ", ".join(hits[:3]))
+    if found:
+        return RuleResult("no_lookalike_characters", False,
+                          "; ".join(found) + ". It looks like plain text but is not; this is how lookalike vendors "
+                          "and re-sent duplicates get past a match")
+    return RuleResult("no_lookalike_characters", True, "names and numbers use plain characters")
+
+
+def no_instructions_in_document(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """Text that talks to an AI or a reviewer has no place on an invoice."""
+    fields = " ".join(str(v) for v in (invoice.vendor_name, invoice.invoice_number, invoice.po_number) if v)
+    fields += " " + " ".join(li.description for li in invoice.line_items)
+    hits = instructions(ctx.document_text + "\n" + fields)
+    if hits:
+        quoted = "; ".join(f"'{h}'" for h in hits)
+        return RuleResult("no_instructions_in_document", False,
+                          f"the document contains text addressed to an AI or a reviewer ({quoted}). It was ignored: "
+                          "only these rules decide. A person should check where this invoice came from")
+    return RuleResult("no_instructions_in_document", True, "no instructions to an AI or a reviewer in the text")
 
 
 RULES = (
     line_items_sum_to_subtotal,
     subtotal_plus_tax_equals_total,
+    tax_rate_is_consistent,
+    amounts_are_plausible,
     dates_are_sane,
     currency_is_iso4217,
     vendor_is_known,
+    vendor_tax_id_is_valid,
     not_a_duplicate,
     matches_purchase_order,
+    no_lookalike_characters,
+    no_instructions_in_document,
 )
 
 

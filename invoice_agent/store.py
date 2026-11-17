@@ -20,9 +20,10 @@ import json
 import sqlite3
 import threading
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 
-from .rules import normalize_id
+from .rules import money, normalize_id
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS runs (
@@ -106,6 +107,19 @@ class InvoiceStore:
     def seed_ledger(self, paid_invoices: list[dict[str, Any]]) -> None:
         for paid in paid_invoices:
             self.add_to_ledger(paid["vendor_id"], paid["invoice_number"], "paid_invoices.json")
+
+    def po_spent(self) -> dict[str, Decimal]:
+        """Totals of approved invoices per PO (normalized PO number), for the PO balance check."""
+        rows = self._conn.execute(
+            "SELECT invoice_json FROM invoices WHERE status IN ({}) AND invoice_json IS NOT NULL".format(
+                ",".join("?" * len(APPROVED_STATUSES))), sorted(APPROVED_STATUSES)).fetchall()
+        spent: dict[str, Decimal] = {}
+        for r in rows:
+            inv = json.loads(r["invoice_json"])
+            if inv.get("po_number"):
+                key = normalize_id(inv["po_number"])
+                spent[key] = spent.get(key, Decimal("0")) + money(inv["total"])
+        return spent
 
     def seen_invoices(self) -> frozenset[tuple[str, str]]:
         rows = self._conn.execute("SELECT vendor_key, invoice_number FROM ledger").fetchall()

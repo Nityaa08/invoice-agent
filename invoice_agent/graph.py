@@ -45,6 +45,7 @@ class InvoiceState(TypedDict, total=False):
     file_bytes: bytes | None  # dropped after ingest so checkpoints stay small
     text: str
     ingest_error: str | None
+    ingest_notes: list[str]  # what ingest had to leave out (an over-long document); forces a review
     attempts: int
     extraction_error: str | None  # for people: "could not find invoice date on the invoice"
     model_feedback: str | None  # for the model's retry: the exact schema errors
@@ -71,7 +72,7 @@ class Deps:
 
 def _match_from_state(state: InvoiceState) -> VendorMatch:
     m = state.get("vendor_match") or {}
-    return VendorMatch(m.get("vendor_id"), m.get("vendor_name"), m.get("score", 0.0))
+    return VendorMatch(m.get("vendor_id"), m.get("vendor_name"), m.get("score", 0.0), m.get("tax_id"))
 
 
 FIELD_LABELS = {
@@ -81,21 +82,34 @@ FIELD_LABELS = {
 }
 
 
-def describe_schema_errors(exc: ValidationError) -> str:
+def describe_schema_errors(exc: ValidationError, where: str = "on the invoice") -> str:
     """Pydantic errors in words a reviewer understands: 'could not find invoice date on the invoice'."""
-    missing, other = [], []
+    missing, negative, huge, other = [], [], [], []
     for e in exc.errors():
         loc = [str(p) for p in e["loc"]]
         field = FIELD_LABELS.get(loc[0], ".".join(loc)) if loc else "output"
+        if loc[:1] == ["line_items"] and len(loc) > 2:
+            field = f"line {int(loc[1]) + 1} {loc[2].replace('_', ' ')}"
+        value = e.get("input")
         if e["type"] == "missing" and len(loc) == 1:
             missing.append(field)
         elif loc[:1] == ["line_items"] and e["type"] == "too_short":
             missing.append("line items")
+        elif e["type"] in ("greater_than_equal", "greater_than") and isinstance(value, (int, float)) and value < 0:
+            negative.append(f"{field} ({value:g})")
+        elif e["type"] == "less_than_equal" and isinstance(value, (int, float)):
+            huge.append(f"{field} ({value:g})")
         else:
             other.append(f"{'.'.join(loc) or 'output'}: {e['msg']}")
     parts = []
     if missing:
-        parts.append("could not find " + ", ".join(missing) + " on the invoice")
+        parts.append(("could not find " if where == "on the invoice" else "missing ") + ", ".join(missing)
+                     + (f" {where}" if where else ""))
+    if negative:
+        parts.append("negative amounts: " + ", ".join(negative[:4]) + (" and more" if len(negative) > 4 else "")
+                     + ". A negative invoice is a credit note or a refund, which a person must handle")
+    if huge:
+        parts.append("amounts too large to be real: " + ", ".join(huge[:4]) + (" and more" if len(huge) > 4 else ""))
     return "; ".join(parts + other)
 
 
@@ -117,7 +131,11 @@ def build_graph(deps: Deps):
     def ingest(state: InvoiceState) -> dict:
         try:
             text = ingest_mod.to_text(state["filename"], state.get("file_bytes") or b"")
-            return {"text": text, "ingest_error": None, "file_bytes": None, "path": ["ingest"]}
+            notes = []
+            if len(text) > ingest_mod.MAX_TEXT_CHARS:
+                text, notes = ingest_mod.shorten(text), [ingest_mod.LONG_TEXT_NOTE]
+            return {"text": text, "ingest_error": None, "ingest_notes": notes, "file_bytes": None,
+                    "path": ["ingest"]}
         except ingest_mod.IngestError as exc:
             return {"text": "", "ingest_error": str(exc), "file_bytes": None, "path": ["ingest"]}
 
@@ -152,7 +170,7 @@ def build_graph(deps: Deps):
         m = deps.matcher.match(state["invoice"]["vendor_name"])
         return {
             "vendor_match": {"vendor_id": m.vendor_id, "vendor_name": m.vendor_name,
-                             "score": m.score, "matched": m.matched},
+                             "score": m.score, "matched": m.matched, "tax_id": m.tax_id},
             "path": ["match_vendor"],
         }
 
@@ -162,11 +180,14 @@ def build_graph(deps: Deps):
             vendor_match=_match_from_state(state),
             seen_invoices=deps.store.seen_invoices(),
             purchase_orders=deps.purchase_orders,
+            po_spent=deps.store.po_spent(),
+            document_text=state.get("text") or "",
         )
         results = [r.__dict__ for r in run_rules(Invoice.model_validate(state["invoice"]), ctx)]
         # Anything the extractor approximated is a failed check, so a human confirms it.
         # A reviewer's correction replaces the extracted fields, so the notes no longer apply.
-        notes = [] if (state.get("review") or {}).get("action") == "correct" else state.get("extraction_notes") or []
+        corrected = (state.get("review") or {}).get("action") == "correct"
+        notes = [] if corrected else list(state.get("ingest_notes") or []) + list(state.get("extraction_notes") or [])
         if notes:
             results.append({"name": "extraction_is_complete", "passed": False, "detail": "; ".join(notes)})
         return {"rules": results, "path": ["validate"]}
@@ -267,5 +288,5 @@ def validate_decision(decision: Any, *, has_invoice: bool) -> dict[str, Any]:
         try:
             out["invoice"] = Invoice.model_validate(decision["invoice"]).model_dump(mode="json")
         except ValidationError as exc:
-            raise ValueError(f"corrected invoice is not valid: {exc.errors()[0]['loc']}: {exc.errors()[0]['msg']}") from exc
+            raise ValueError(f"corrected invoice is not valid: {describe_schema_errors(exc, 'in the correction')}") from exc
     return out

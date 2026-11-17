@@ -29,6 +29,7 @@ from typing import Any, Protocol
 import numpy as np
 
 from .rules import VendorMatch
+from .textguard import fold
 
 # Words that say what kind of company it is, not which company.
 _LEGAL_WORDS = {
@@ -38,8 +39,12 @@ _LEGAL_WORDS = {
 
 
 def normalize_vendor_name(name: str) -> str:
-    """Lower-case, '&' -> 'and', drop punctuation and legal-form words."""
-    text = name.lower().replace("&", " and ")
+    """Fold lookalike letters, lower-case, '&' -> 'and', drop punctuation and legal-form words.
+
+    Folding means "Orbit Fаcility" (Cyrillic а) still matches Orbit; the
+    no_lookalike_characters rule then reports the odd letter to a person.
+    """
+    text = fold(name).lower().replace("&", " and ")
     words = re.findall(r"[a-z0-9]+", text)
     kept = [w for w in words if w not in _LEGAL_WORDS]
     return " ".join(kept or words)
@@ -152,4 +157,4 @@ class VendorMatcher:
         if not hits:
             return VendorMatch(None, None, 0.0)
         best = hits[0]
-        return VendorMatch(best.id, best.metadata["name"], round(best.score, 4))
+        return VendorMatch(best.id, best.metadata["name"], round(best.score, 4), best.metadata.get("tax_id"))

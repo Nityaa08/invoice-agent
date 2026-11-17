@@ -176,7 +176,10 @@ def test_duplicate_detected_against_paid_ledger_and_own_approvals(settings, samp
     # Same invoice, different file (text copy instead of the PDF): different bytes, same invoice.
     again, created = svc.submit("01-copy.txt", first["text"].encode())
     assert created
-    assert [r["name"] for r in again["rules"] if not r["passed"]] == ["not_a_duplicate"]
+    # Caught twice over: same vendor + number, and PO-7781 (30,000) cannot pay 23,954 a second time.
+    assert [r["name"] for r in again["rules"] if not r["passed"]] == ["not_a_duplicate", "matches_purchase_order"]
+    po = next(r for r in again["rules"] if r["name"] == "matches_purchase_order")
+    assert "already approved" in po["detail"]
 
 
 def test_same_file_twice_is_processed_once(settings, sample_bytes):
