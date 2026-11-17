@@ -185,10 +185,19 @@ const HTTP_MESSAGES = {
   504: "The server took too long to process this file; try a smaller PDF.",
 };
 
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function api(url, opts) {
-  let res;
-  try { res = await fetch(url, opts); }
-  catch (e) { throw new Error("Could not reach the server. Check your connection and try again."); }
+  // A free serverless function can drop the first request while it cold-starts,
+  // so a failed connection is retried a few times before the user sees an error.
+  // Only reads are retried automatically; an upload is retried once (it is idempotent:
+  // the run id is a hash of the file).
+  const tries = (!opts || !opts.method || opts.method === "GET") ? 4 : 2;
+  let res, lastErr;
+  for (let i = 0; i < tries; i++) {
+    try { res = await fetch(url, opts); break; }
+    catch (e) { lastErr = e; if (i < tries - 1) await sleep(700 * (i + 1)); }
+  }
+  if (!res) throw new Error("Could not reach the server. Check your connection and try again.");
   const body = await res.json().catch(() => null);
   if (!res.ok) {
     // FastAPI sends {detail: "..."} or {detail: [{msg: ...}]}; Vercel's own limits send plain text.
@@ -219,7 +228,23 @@ function pickFile(f) {
   start({ file: f });
 }
 
+function wireUpload() {
+  $("file").addEventListener("change", (e) => {
+    const f = e.target.files[0];
+    e.target.value = "";  // so choosing the same file again fires "change" again
+    if (f) pickFile(f);
+  });
+  const drop = $("drop");
+  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
+  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
+  drop.addEventListener("drop", (e) => {
+    e.preventDefault(); drop.classList.remove("over");
+    if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
+  });
+}
+
 async function init() {
+  wireUpload();
   S.config = await api("/api/config");
   const m = $("mode");
   if (S.config.extractor === "llm") {
@@ -238,18 +263,6 @@ async function init() {
   $("samples").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-file]");
     if (b) start({ sample: b.dataset.file });
-  });
-  $("file").addEventListener("change", (e) => {
-    const f = e.target.files[0];
-    e.target.value = "";  // so choosing the same file again fires "change" again
-    if (f) pickFile(f);
-  });
-  const drop = $("drop");
-  drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
-  drop.addEventListener("dragleave", () => drop.classList.remove("over"));
-  drop.addEventListener("drop", (e) => {
-    e.preventDefault(); drop.classList.remove("over");
-    if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
   });
   $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB. ` + $("uphint").textContent;
   renderPath(null);
@@ -409,7 +422,13 @@ function act(kind) {
   review({ ...base, action: kind });
 }
 
-init().catch(showError);
+init().catch((e) => {
+  const m = $("mode");
+  m.className = "mode";
+  m.innerHTML = `<b>The demo server did not answer.</b> ${esc(e.message)} <button type="button" id="retry-init">Try again</button>`;
+  $("retry-init").addEventListener("click", () => location.reload());
+  showError(e);
+});
 </script>
 </body>
 </html>
