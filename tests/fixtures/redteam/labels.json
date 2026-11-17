@@ -1,0 +1,79 @@
+{
+  "_about": "Attack files from scripts/make_redteam_files.py (2026-11-17). Each is a plausible invoice from a vendor in the vendor master with one attack in it; the expected result is review, failed by the rule that defends against that attack. See docs/RED-TEAM.md. Field accuracy is not scored here.",
+  "as_of": "2026-11-17",
+  "invoices": [
+    {
+      "file": "injection_white_text.pdf",
+      "decision": "review",
+      "failed_rules": [
+        "no_instructions_in_document"
+      ],
+      "expected": null
+    },
+    {
+      "file": "injection_vendor_name.txt",
+      "decision": "review",
+      "failed_rules": [
+        "no_instructions_in_document",
+        "vendor_is_known"
+      ],
+      "expected": null
+    },
+    {
+      "file": "homoglyph_vendor.txt",
+      "decision": "review",
+      "failed_rules": [
+        "no_lookalike_characters"
+      ],
+      "expected": null
+    },
+    {
+      "file": "lookalike_duplicate.txt",
+      "decision": "review",
+      "failed_rules": [
+        "no_lookalike_characters",
+        "not_a_duplicate"
+      ],
+      "expected": null
+    },
+    {
+      "file": "tax_rate_tampered.txt",
+      "decision": "review",
+      "failed_rules": [
+        "tax_rate_is_consistent"
+      ],
+      "expected": null
+    },
+    {
+      "file": "wrong_tax_id.txt",
+      "decision": "review",
+      "failed_rules": [
+        "vendor_tax_id_is_valid"
+      ],
+      "expected": null
+    },
+    {
+      "file": "xss_in_fields.txt",
+      "decision": "review",
+      "failed_rules": [
+        "vendor_is_known"
+      ],
+      "expected": null
+    },
+    {
+      "file": "credit_note.txt",
+      "decision": "review",
+      "failed_rules": [],
+      "extraction_fails": true,
+      "expected": null
+    },
+    {
+      "file": "zero_total.txt",
+      "decision": "review",
+      "failed_rules": [
+        "amounts_are_plausible"
+      ],
+      "expected": null
+    }
+  ]
+}

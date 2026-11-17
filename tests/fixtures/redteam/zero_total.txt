@@ -1,0 +1,16 @@
+Orbit Facility Management LLP
+7th Floor, Prestige Tower, Bengaluru 560001
+GSTIN: 29AAFFO5678L1Z9
+
+TAX INVOICE
+Invoice No: OFM/26/410
+Invoice Date: 02-11-2026
+Due Date: 30-11-2026
+
+Description                               Qty      Rate          Amount
+Goodwill visit                              1        0.00          0.00
+
+                                              Sub Total:      0.00
+                                              CGST 9%:        0.00
+                                              SGST 9%:        0.00
+                                              Grand Total:    0.00

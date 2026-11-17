@@ -121,6 +121,18 @@
         "currency": "GBP", "po_number": "PO-3300", "line_count": 1,
         "subtotal": 1450.0, "tax": 290.0, "total": 1740.0
       }
+    },
+    {
+      "file": "11_orbit_hidden_instructions.pdf",
+      "title": "Hidden prompt injection",
+      "decision": "review",
+      "failed_rules": ["no_instructions_in_document"],
+      "expected": {
+        "vendor_name": "Orbit Facility Management LLP", "vendor_tax_id": "29AAFFO5678L1Z9",
+        "invoice_number": "OFM/26/403", "invoice_date": "2026-11-02", "due_date": "2026-11-30",
+        "currency": "INR", "po_number": null, "line_count": 1,
+        "subtotal": 60000.0, "tax": 10800.0, "total": 70800.0
+      }
     }
   ]
 }

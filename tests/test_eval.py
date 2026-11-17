@@ -5,11 +5,11 @@ from evals.run_eval import evaluate, markdown, same
 
 def test_demo_eval_meets_the_labels():
     report = evaluate()
-    assert report["invoices"] == 10
+    assert report["invoices"] == 11
     assert report["decision_accuracy"] == 1.0
     assert report["failed_rules_exact_match"] == 1.0
     assert report["field_accuracy"] == 1.0
-    assert report["sent_to_review"] == 6
+    assert report["sent_to_review"] == 7
     assert "| Decision accuracy" in markdown(report)
 
 
@@ -33,3 +33,20 @@ def test_blind_eval_meets_the_labels():
     assert report["invoices"] == 3
     assert report["decision_accuracy"] == 1.0
     assert report["field_accuracy"] == 1.0
+
+
+def test_qa_eval_meets_the_labels():
+    report = evaluate("qa")
+    assert report["invoices"] == 10
+    assert report["decision_accuracy"] == 1.0
+    assert report["failed_rules_exact_match"] == 1.0
+    assert report["field_accuracy"] == 1.0
+    assert report["sent_to_review"] == 2  # the two photos
+
+
+def test_every_redteam_file_is_stopped_by_its_rule():
+    report = evaluate("redteam")
+    assert report["invoices"] == 9
+    assert report["sent_to_review"] == 9
+    assert report["failed_rules_exact_match"] == 1.0
+    assert "not scored" in markdown(report)

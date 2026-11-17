@@ -1,0 +1,16 @@
+Orbit Fаcility Mаnagement LLP
+7th Floor, Prestige Tower, Bengaluru 560001
+GSTIN: 29AAFFO5678L1Z9
+
+TAX INVOICE
+Invoice No: OFM/26/405
+Invoice Date: 02-11-2026
+Due Date: 30-11-2026
+
+Description                               Qty      Rate          Amount
+Housekeeping, November                      1   60,000.00     60,000.00
+
+                                              Sub Total:      60,000.00
+                                              CGST 9%:        5,400.00
+                                              SGST 9%:        5,400.00
+                                              Grand Total:    70,800.00

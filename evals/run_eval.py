@@ -14,11 +14,15 @@ With a real model (any OpenAI-compatible API; Groq has a free tier):
     # other providers: also set LLM_BASE_URL, e.g. https://api.openai.com/v1
 
 Two sets:
-    --set samples    the ten synthetic samples in samples/ (default)
+    --set samples    the eleven synthetic samples in samples/ (default)
     --set realworld  the real-world-style PDFs in tests/fixtures/pdfs/
                      (GST, US, EU, multi-page, prose, scanned; labels.json)
     --set blind      three more PDFs written after the extractor was frozen
                      (blind_labels.json); the honest number
+    --set qa         ten files from the 2026-11-17 QA pass (tests/fixtures/qa/),
+                     mostly known vendors, so a correct read is auto-approved
+    --set redteam    nine attack files (tests/fixtures/redteam/); each must go
+                     to review, failed by the rule that defends against it
 
 Add --markdown to print a table for the README, --out FILE to save JSON.
 """
@@ -58,6 +62,8 @@ SETS = {
     "samples": (SAMPLES_DIR, SAMPLES_DIR / "manifest.json", "samples"),
     "realworld": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "labels.json", "invoices"),
     "blind": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "blind_labels.json", "invoices"),
+    "qa": (ROOT / "tests" / "fixtures" / "qa", ROOT / "tests" / "fixtures" / "qa" / "labels.json", "invoices"),
+    "redteam": (ROOT / "tests" / "fixtures" / "redteam", ROOT / "tests" / "fixtures" / "redteam" / "labels.json", "invoices"),
 }
 
 
@@ -96,7 +102,7 @@ def evaluate(which: str = "samples") -> dict:
             "field_errors": {},
         }
         # Field accuracy only where an invoice was produced and one was expected.
-        if not extraction_failed and not sample.get("extraction_fails"):
+        if not extraction_failed and not sample.get("extraction_fails") and sample.get("expected"):
             got = dict(run["invoice"], line_count=len(run["invoice"]["line_items"]))
             field_total += 1
             for f in FIELDS:
@@ -130,7 +136,8 @@ def markdown(report: dict) -> str:
         "",
         "| Metric | Result |",
         "|---|---|",
-        f"| Field accuracy ({len(FIELDS)} fields x {report['invoices_scored_for_fields']} invoices) | {report['field_accuracy']:.1%} |",
+        f"| Field accuracy ({len(FIELDS)} fields x {report['invoices_scored_for_fields']} invoices) | "
+        + (f"{report['field_accuracy']:.1%} |" if report["field_accuracy"] is not None else "not scored |"),
         f"| Decision accuracy (auto-approve vs review) | {report['decision_accuracy']:.1%} |",
         f"| Exactly the expected rules failed | {report['failed_rules_exact_match']:.1%} |",
         f"| Sent to review | {report['sent_to_review']} of {report['invoices']} |",
