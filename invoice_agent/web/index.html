@@ -66,6 +66,12 @@ h1{font-size:clamp(28px,4.4vw,44px);line-height:1.08;letter-spacing:-.025em;font
 .node.wait{color:var(--warn)} .node.wait .dot{border-color:var(--warn);animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{box-shadow:0 0 0 4px color-mix(in srgb,var(--warn) 25%,transparent)}}
 .times{font-family:var(--mono);font-size:11px;margin-left:6px;color:var(--ink-3)}
+.timeline summary{margin-top:10px}
+.tl{list-style:none;margin-top:8px;display:grid;gap:4px;font-size:12.5px}
+.tl li{display:grid;grid-template-columns:62px minmax(0,1fr) 58px;gap:2px 8px;align-items:baseline}
+.tl li b{font-family:var(--mono);font-weight:500;font-size:12px}
+.tl li code{font-size:11px;color:var(--ink-3)} .tl li code:last-of-type{text-align:right}
+.tl li span{grid-column:2 / 4;color:var(--ink-2);font-size:12px}
 .seq{margin-top:14px;font-family:var(--mono);font-size:12px;color:var(--ink-2);word-break:break-word}
 .status{border-radius:14px;padding:18px 20px;border:1px solid var(--line)}
 .status.ok{background:var(--ok-bg);color:var(--ok);border-color:transparent}
@@ -173,6 +179,7 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
         <h2>2 · Graph path</h2>
         <ol class="path" id="path"></ol>
         <div class="seq" id="seq"></div>
+        <details class="timeline" id="timeline" hidden></details>
       </section>
     </div>
 
@@ -569,15 +576,35 @@ async function init() {
 
 function renderPath(run) {
   const path = run ? run.path : [];
+  const trace = (run && run.trace) || [];
   const waiting = run && run.status === "needs_review";
+  const msFor = (name) => trace.filter((e) => e.node === name).reduce((a, e) => a + e.ms, 0);
   $("path").innerHTML = NODES.map(([name, what]) => {
     const n = path.filter((p) => p === name).length;
     const cls = waiting && name === "human_review" ? "wait" : n ? "done" : "";
-    return `<li class="node ${cls}"><span class="dot"></span><b>${name}</b>${n > 1 ? `<span class="times">×${n}</span>` : ""}
+    const ms = n ? msFor(name) : 0;
+    return `<li class="node ${cls}"><span class="dot"></span><b>${name}</b>${n > 1 ? `<span class="times">×${n}</span>` : ""}${n && trace.length ? `<span class="times">${fmtMs(ms)}</span>` : ""}
       <span class="what">${esc(waiting && name === "human_review" ? "paused here: waiting for you" : what)}</span></li>`;
   }).join("");
   $("seq").textContent = run ? "START → " + path.join(" → ") + (waiting ? " → (interrupt)" : " → END") : "";
+  $("timeline").hidden = !trace.length;
+  if (!trace.length) return;
+  const t0 = Date.parse(trace[0].at);
+  const total = trace.reduce((a, e) => a + e.ms, 0);
+  $("timeline").innerHTML = `<summary>Timeline · ${fmtMs(total)} in the graph</summary><ol class="tl">` + trace.map((e) => {
+    const bits = [];
+    if (e.failed && e.failed.length) bits.push("failed: " + e.failed.join(", "));
+    else if (e.passed !== undefined) bits.push(`${e.passed} rules passed`);
+    if (e.vendor_id !== undefined) bits.push(e.matched ? `${e.vendor_id} at ${Number(e.score).toFixed(2)}` : `no match (${Number(e.score).toFixed(2)})`);
+    if (e.ok !== undefined) bits.push(e.ok ? `ok, attempt ${e.attempt}` : `schema error, attempt ${e.attempt}`);
+    if (e.chars !== undefined) bits.push(e.error_kind ? "unreadable" : `${e.chars} characters${e.source === "ocr" ? " (OCR)" : ""}`);
+    if (e.action) bits.push(`reviewer: ${e.action}`);
+    if (e.status && !e.action) bits.push(e.status);
+    return `<li><code>+${fmtMs(Math.max(0, Date.parse(e.at) - t0))}</code><b>${esc(e.node)}</b><code>${fmtMs(e.ms)}</code><span>${esc(bits.join(" · "))}</span></li>`;
+  }).join("") + `</ol>`;
 }
+
+function fmtMs(ms) { return ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : ms >= 10 ? `${Math.round(ms)} ms` : `${ms.toFixed(1)} ms`; }
 
 function render(run, scroll) {
   const it = current();

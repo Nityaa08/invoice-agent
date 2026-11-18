@@ -32,6 +32,7 @@ from typing_extensions import TypedDict
 
 from . import ingest as ingest_mod
 from .extractors import NOTES_KEY, ExtractionError, Extractor
+from .obs import traced
 from .rules import GoodsReceipt, PurchaseOrder, RuleContext, VendorMatch, duplicate_key, run_rules
 from .schema import Invoice
 from .store import InvoiceStore
@@ -66,6 +67,7 @@ class InvoiceState(TypedDict, total=False):
     review: dict[str, Any] | None  # the reviewer's last decision
     status: str
     path: Annotated[list[str], operator.add]  # nodes visited, in order
+    trace: Annotated[list[dict[str, Any]], operator.add]  # one timed entry per node run (see obs.py)
 
 
 @dataclass
@@ -276,14 +278,25 @@ def build_graph(deps: Deps):
     def after_review(state: InvoiceState) -> Literal["match_vendor", "save"]:
         return "match_vendor" if state["review"]["action"] in RECHECK_ACTIONS else "save"
 
+    # What each node's timeline entry says (ids, counts and rule names; never document content).
+    outcomes = {
+        "ingest": lambda s, u: {"chars": len(u.get("text") or ""), "source": u.get("source") or s.get("source"),
+                                **({"error_kind": "unreadable"} if u.get("ingest_error") else {})},
+        "extract": lambda s, u: {"ok": u.get("extraction_error") is None, "attempt": u.get("attempts"),
+                                 "extractor": getattr(deps.extractor, "name", "?"),
+                                 "notes": len(u.get("extraction_notes") or [])},
+        "match_vendor": lambda s, u: {k: u["vendor_match"].get(k) for k in ("vendor_id", "score", "matched")},
+        "validate": lambda s, u: {"passed": sum(r["passed"] for r in u["rules"]),
+                                  "failed": [r["name"] for r in u["rules"] if not r["passed"]]},
+        "auto_approve": lambda s, u: {"status": u.get("status")},
+        "human_review": lambda s, u: {"action": (u.get("review") or {}).get("action"), "status": u.get("status")},
+        "save": lambda s, u: {"status": s.get("status")},
+    }
     g = StateGraph(InvoiceState)
-    g.add_node("ingest", ingest)
-    g.add_node("extract", extract)
-    g.add_node("match_vendor", match_vendor)
-    g.add_node("validate", validate)
-    g.add_node("auto_approve", auto_approve)
-    g.add_node("human_review", human_review)
-    g.add_node("save", save)
+    for name, fn in (("ingest", ingest), ("extract", extract), ("match_vendor", match_vendor),
+                     ("validate", validate), ("auto_approve", auto_approve), ("human_review", human_review),
+                     ("save", save)):
+        g.add_node(name, traced(name, fn, outcomes[name]))
 
     g.add_edge(START, "ingest")
     g.add_conditional_edges("ingest", after_ingest)

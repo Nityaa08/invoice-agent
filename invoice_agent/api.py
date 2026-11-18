@@ -4,6 +4,7 @@ Full service (default, `uvicorn main:app`):
     POST /invoices                 upload a file (or pick a sample) -> runs the graph
     GET  /api/runs                 the latest runs (a review queue)
     GET  /api/runs/export          the runs as CSV or JSON (?format=json)
+    GET  /api/runs/{id}/trace      the run's timeline: node, start, duration, outcome; plus the audit log
     GET  /invoices/{id}            the run: extracted JSON, rule results, path, pending review
     POST /invoices/{id}/review     approve / reject / correct / recheck -> resumes the paused graph
 
@@ -51,6 +52,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
 
 from .config import SAMPLES_DIR, Settings
+from .obs import tracing_backend
 from .ingest import MAX_UPLOAD_BYTES, MAX_UPLOAD_MB
 
 log = logging.getLogger(__name__)
@@ -292,6 +294,7 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
             "as_of_uploads": (settings.as_of.isoformat() if settings.as_of_from_env and settings.as_of
                               else None if not settings.demo_mode else "today"),
             "max_upload_mb": MAX_UPLOAD_MB,
+            "tracing": tracing_backend(),
             "rules": [r.__name__ for r in RULES],
         }, CACHE_STATIC)
 
@@ -378,6 +381,14 @@ def _register_full(app: FastAPI, settings: Settings):
         return Response(to_csv(rows), media_type="text/csv; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="invoice-agent-runs.csv"'})
 
+    @app.get("/api/runs/{run_id}/trace")
+    def run_trace(run_id: str):
+        """The audit trail of one run: each node with its start time, duration and outcome, plus the audit log."""
+        try:
+            return service.trace(run_id)
+        except RunNotFound:
+            raise HTTPException(404, f"no run {run_id}")
+
     @app.get("/invoices/{run_id}")
     def get_run(run_id: str):
         try:
@@ -450,8 +461,8 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
         filename, data = await _read_input(file, sample)
         added = _parse_vendors(vendors)
         uploaded = not (sample and (file is None or not file.filename))
-        log.info("demo run: %s, %d bytes, %s", ("ocr text" if origin else "upload") if uploaded else "sample", len(data),
-                 filename.rsplit(".", 1)[-1].lower() if "." in filename else "no extension")
+        kind = ("ocr_text" if origin else "upload") if uploaded else "sample"
+        ext = filename.rsplit(".", 1)[-1].lower()[:8] if "." in filename else "none"
 
         # A fresh in-memory service per request: nothing is shared between visitors.
         # The fixed demo date keeps the samples fresh; a real upload is checked against today.
@@ -460,8 +471,6 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
 
         service = InvoiceService.ephemeral(run_settings, vendors=added)
         run, _ = service.submit(filename, data, source=origin)
-        if run.get("ingest_error") or run.get("extraction_error"):
-            log.info("demo run %s needs review: %s", run["id"], run.get("ingest_error") or run.get("extraction_error"))
         for step in steps:
             if run["status"] != "needs_review":
                 break
@@ -469,4 +478,11 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
                 run = service.review(run["id"], step)
             except ValueError as exc:
                 raise HTTPException(422, str(exc))
+        # One structured line per demo run: kind, size, extension, outcome, timings. No names or contents.
+        log.info("demo_run", extra={"fields": {
+            "event": "demo_run", "run_id": run["id"], "input": kind, "bytes": len(data), "ext": ext,
+            "status": run["status"], "decisions": len(steps), "added_vendors": len(added),
+            "failed_rules": [r["name"] for r in run["rules"] if not r["passed"]],
+            "ingest_error": bool(run.get("ingest_error")), "extraction_error": bool(run.get("extraction_error")),
+            "ms": round(sum(e["ms"] for e in run.get("trace", [])), 1)}})
         return run

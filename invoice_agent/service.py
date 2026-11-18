@@ -150,7 +150,8 @@ class InvoiceService:
             return self.view(existing, duplicate_submission=True), False
         self.store.audit(run_id, "submitted", filename=filename, bytes=len(data))
         self._invoke(run_id, {"run_id": run_id, "filename": filename, "file_bytes": data,
-                              "source": "ocr" if source == "ocr" else None, "attempts": 0, "path": []})
+                              "source": "ocr" if source == "ocr" else None, "attempts": 0, "path": [],
+                              "trace": []})
         return self.view(run_id), True
 
     def get(self, run_id: str) -> dict[str, Any]:
@@ -167,6 +168,12 @@ class InvoiceService:
                          note=clean["note"])
         self._invoke(run_id, Command(resume=clean))
         return self.view(run_id)
+
+    def trace(self, run_id: str) -> dict[str, Any]:
+        """The run's timeline (node, start, duration, outcome) plus its audit log."""
+        v = self.view(run_id)
+        return {"run_id": run_id, "status": v["status"], "path": v["path"], "trace": v["trace"],
+                "total_ms": round(sum(e["ms"] for e in v["trace"]), 2), "audit": v["audit"]}
 
     def list_runs(self, limit: int = 500) -> list[dict[str, Any]]:
         """The most recent runs, newest first, each as a full view."""
@@ -222,6 +229,7 @@ class InvoiceService:
             "status": status,
             "duplicate_submission": duplicate_submission,
             "path": v.get("path", []),
+            "trace": v.get("trace", []),
             "next": list(snap.next),
             "extractor": self.deps.extractor.name,
             "as_of": self.deps.today().isoformat(),

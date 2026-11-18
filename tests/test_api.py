@@ -43,7 +43,7 @@ def test_page_config_and_samples(full):
     assert cfg.pop("rules")[:2] == ["line_items_sum_to_subtotal", "subtotal_plus_tax_equals_total"]
     assert cfg == {
         "demo_mode": False, "extractor": "demo", "llm_model": None, "as_of": "2026-11-13",
-        "as_of_uploads": "2026-11-13", "max_upload_mb": 4,
+        "as_of_uploads": "2026-11-13", "max_upload_mb": 4, "tracing": "off",
     }
     samples = full.get("/api/samples").json()
     assert len(samples) == 13 and samples[0]["file"] == "01_northwind_ok.pdf"
