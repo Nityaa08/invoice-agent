@@ -123,6 +123,29 @@ img.photo{display:block;max-width:100%;max-height:520px;margin-top:8px;border:1p
 .qname small{display:block;color:var(--ink-3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
 .qpill{flex:none;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;border-radius:6px;padding:2px 7px;background:var(--chip);color:var(--ink-2)}
 .qpill.ok{background:var(--ok-bg);color:var(--ok)} .qpill.bad{background:var(--bad-bg);color:var(--bad)} .qpill.wait{background:var(--warn-bg);color:var(--warn)}
+.sub{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--bad);margin:14px 0 8px}
+#attacks button{border-style:dashed}
+.how{margin-top:14px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 16px}
+.how summary{font-weight:600;font-size:14px;color:var(--ink);margin:0;cursor:pointer}
+.howbody{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(0,1fr);gap:18px;align-items:center;margin-top:10px}
+.diagram{overflow-x:auto}
+.diagram svg{min-width:520px;display:block}
+.diagram .edges path{fill:none;stroke:var(--ink-3);stroke-width:1.4}
+.diagram .edges path.dash{stroke-dasharray:4 4}
+.diagram .ah{fill:var(--ink-3)}
+.diagram rect{fill:var(--bg);stroke:var(--ink);stroke-width:1.3}
+.diagram rect.ok{fill:var(--ok-bg);stroke:var(--ok)} .diagram rect.wait{fill:var(--warn-bg);stroke:var(--warn)}
+.diagram .boxes text{font-family:var(--mono);font-size:12px;fill:var(--ink);text-anchor:middle}
+.diagram .labels text{font-size:11px;fill:var(--ink-2);text-anchor:middle}
+.howlist{list-style:none;display:grid;gap:8px;font-size:13.5px;color:var(--ink-2)}
+.howlist b{color:var(--ink)}
+@media (max-width:860px){.howbody{grid-template-columns:minmax(0,1fr)}}
+.keys{position:fixed;inset:0;background:color-mix(in srgb,var(--ink) 35%,transparent);display:grid;place-items:center;padding:16px;z-index:10}
+.keys[hidden]{display:none}
+.keys > div{background:var(--surface);color:var(--ink);border-radius:14px;padding:20px 22px;max-width:420px;width:100%;box-shadow:0 10px 40px rgba(0,0,0,.25)}
+.keys h3{font-size:16px;margin-bottom:10px}
+.keys dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;font-size:14px}
+kbd{font-family:var(--mono);font-size:12px;background:var(--chip);border:1px solid var(--line-2);border-bottom-width:2px;border-radius:5px;padding:1px 6px}
 .tag{font-size:11px;font-weight:600;border-radius:6px;padding:1px 7px;background:var(--chip);color:var(--ink-2)}
 footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);font-size:13px}
 @media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)} nav .hide-sm{display:none}}
@@ -143,8 +166,50 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
   <section class="hero">
     <div class="eyebrow">LangGraph · structured output · vector match · human in the loop</div>
     <h1>Invoices in, validated data out. The model reads; tested code decides.</h1>
-    <p class="lede">Pick a synthetic invoice or upload your own. The agent extracts the fields into a strict schema, matches the vendor against a vendor master, runs <span id="nrules">twelve</span> validation rules and either approves the invoice or stops for a human.</p>
+    <p class="lede">Pick a synthetic invoice or upload your own. The agent extracts the fields into a strict schema, matches the vendor against a vendor master, runs <span id="nrules">13</span> validation rules and either approves the invoice or stops for a human.</p>
     <div class="mode" id="mode">Loading…</div>
+    <details class="how" id="how">
+      <summary>How it works</summary>
+      <div class="howbody">
+        <div class="diagram" role="img" aria-label="The LangGraph flow: ingest, extract, match_vendor, validate, then auto_approve and save, or human_review, which can send the run back to match_vendor or on to save">
+        <svg viewBox="0 0 740 236" width="100%" xmlns="http://www.w3.org/2000/svg">
+          <defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker></defs>
+          <g class="edges" marker-end="url(#ah)">
+            <path d="M102,70 H124"/><path d="M216,70 H238"/><path d="M350,70 H372"/>
+            <path d="M462,70 H500"/><path d="M606,70 H630"/>
+            <path d="M418,88 V158"/>
+            <path d="M478,176 H668 V90"/>
+            <path d="M372,186 H296 V90"/>
+            <path d="M150,52 C150,18 196,18 196,52"/>
+            <path d="M58,88 V214 H418 V196" class="dash"/>
+          </g>
+          <g class="boxes">
+            <rect x="12" y="52" width="90" height="36" rx="8"/><text x="57" y="75">ingest</text>
+            <rect x="126" y="52" width="90" height="36" rx="8"/><text x="171" y="75">extract</text>
+            <rect x="240" y="52" width="110" height="36" rx="8"/><text x="295" y="75">match_vendor</text>
+            <rect x="374" y="52" width="88" height="36" rx="8"/><text x="418" y="75">validate</text>
+            <rect x="502" y="52" width="104" height="36" rx="8" class="ok"/><text x="554" y="75">auto_approve</text>
+            <rect x="632" y="52" width="72" height="36" rx="8"/><text x="668" y="75">save</text>
+            <rect x="374" y="160" width="104" height="36" rx="8" class="wait"/><text x="426" y="183">human_review</text>
+          </g>
+          <g class="labels">
+            <text x="173" y="14">schema error: retry once</text>
+            <text x="482" y="48">all pass</text>
+            <text x="424" y="124" text-anchor="start">a rule fails</text>
+            <text x="590" y="170">approve / reject</text>
+            <text x="330" y="202">correct / recheck</text>
+            <text x="200" y="228">unreadable file</text>
+          </g>
+        </svg>
+        </div>
+        <ul class="howlist">
+          <li><b>The model reads.</b> An LLM (or the free demo extractor) fills a strict Pydantic <code>Invoice</code>; output that breaks the schema is retried once with the error fed back.</li>
+          <li><b>Tested code decides.</b> <span id="nrules2">13</span> plain-Python rules: arithmetic, tax rate, dates, currency, vendor match (a small vector store), tax id, duplicates, PO balance, goods receipt (three-way match), lookalike characters and injected instructions.</li>
+          <li><b>A person handles exceptions.</b> Any failed rule pauses the graph with LangGraph's <code>interrupt()</code>; the reviewer approves, rejects, corrects the fields, or adds the vendor and re-checks. Corrections go back through every rule.</li>
+          <li><b>Everything is recorded.</b> Each node's timing and outcome, every decision in an audit log, and the same agent is exposed as MCP tools for Claude Desktop. No approve tool: the model never approves.</li>
+        </ul>
+      </div>
+    </details>
   </section>
 
   <div class="grid">
@@ -152,6 +217,8 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
       <section class="card">
         <h2>1 · Invoices</h2>
         <ul class="samples" id="samples"></ul>
+        <h3 class="sub">Try an attack</h3>
+        <ul class="samples" id="attacks"></ul>
         <div class="row" style="margin-top:10px"><button type="button" class="btn ghost small" id="runall">Run all samples as a batch</button></div>
         <label class="drop" id="drop">
           <input type="file" id="file" multiple accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp">
@@ -189,10 +256,25 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
   </div>
 </main>
 
+<div class="keys" id="keys" hidden role="dialog" aria-modal="true" aria-labelledby="keys-title"><div>
+  <h3 id="keys-title">Keyboard shortcuts</h3>
+  <dl>
+    <dt><kbd>j</kbd> / <kbd>k</kbd></dt><dd>next / previous invoice in the queue</dd>
+    <dt><kbd>a</kbd></dt><dd>approve the invoice on screen</dd>
+    <dt><kbd>r</kbd></dt><dd>reject it</dd>
+    <dt><kbd>c</kbd></dt><dd>correct its fields</dd>
+    <dt><kbd>v</kbd></dt><dd>add its vendor (when the vendor is unknown)</dd>
+    <dt><kbd>u</kbd></dt><dd>upload files</dd>
+    <dt><kbd>b</kbd></dt><dd>run all samples as a batch</dd>
+    <dt><kbd>?</kbd> / <kbd>Esc</kbd></dt><dd>show / hide this list</dd>
+  </dl>
+</div></div>
+
 <footer><div class="wrap">
   Synthetic data only: every company, tax id and number in the samples is made up.
   Source and design notes on <a href="https://github.com/Nityaa08/invoice-agent">GitHub</a> ·
-  <a href="https://nityashree.in">nityashree.in</a>
+  <a href="https://nityashree.in">nityashree.in</a> ·
+  <button type="button" class="linkbtn" id="showkeys">keyboard shortcuts (<kbd>?</kbd>)</button>
 </div></footer>
 
 <script>
@@ -458,7 +540,7 @@ function select(i) {
 
 function showCurrent(scroll) {
   const it = current();
-  document.querySelectorAll("#samples button").forEach((b) =>
+  document.querySelectorAll("button[data-file]").forEach((b) =>
     b.setAttribute("aria-pressed", String(!!it && b.dataset.file === it.input.sample)));
   if (!it) { $("out").innerHTML = `<section class="card"><div class="empty">Pick a sample to run the graph.</div></section>`; renderPath(null); return; }
   if (it.state === "error") { renderPath(null); $("out").innerHTML = `<section class="card"><div class="err">${esc(it.input.label || it.input.sample)}: ${esc(it.error)}</div></section>`; return; }
@@ -538,7 +620,7 @@ function sampleButton(s) {
 async function init() {
   wireUpload();
   S.config = await api("/api/config");
-  if (S.config.rules) $("nrules").textContent = S.config.rules.length;
+  if (S.config.rules) $("nrules").textContent = $("nrules2").textContent = S.config.rules.length;
   const m = $("mode");
   if (S.config.extractor === "llm") {
     m.className = "mode live";
@@ -549,7 +631,8 @@ async function init() {
       (S.config.demo_mode ? ` Nothing is stored: each run lives in one request.` : "");
   }
   S.samples = await api("/api/samples");
-  $("samples").innerHTML = S.samples.map(sampleButton).join("");
+  $("samples").innerHTML = S.samples.filter((x) => x.group !== "attack").map(sampleButton).join("");
+  $("attacks").innerHTML = S.samples.filter((x) => x.group === "attack").map(sampleButton).join("");
   document.querySelector(".col").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-file]");
     if (b) return enqueue([{ sample: b.dataset.file, label: b.dataset.file }]);
@@ -570,6 +653,7 @@ async function init() {
     S.vendors.splice(Number(b.dataset.forget), 1); saveVendors(); refreshVendors();
   });
   await refreshVendors().catch(() => {});
+  wireKeys();
   $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB per file, ${MAX_BATCH} files at a time. ` + $("uphint").textContent;
   renderPath(null);
 }
@@ -679,6 +763,33 @@ function render(run, scroll) {
   if (req) {
     $("out").querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
   }
+}
+
+// --- keyboard shortcuts --------------------------------------------------------------
+function toggleKeys(show) { $("keys").hidden = show === undefined ? !$("keys").hidden : !show; }
+function wireKeys() {
+  $("showkeys").addEventListener("click", () => toggleKeys(true));
+  $("keys").addEventListener("click", (e) => { if (e.target === $("keys")) toggleKeys(false); });
+  document.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.key === "Escape") return toggleKeys(false);
+    if (e.target.closest("input, textarea, select, [contenteditable]")) return;  // typing, not a shortcut
+    const click = (sel) => { const b = $("out").querySelector(sel); if (b && !b.disabled) { b.click(); return true; } return false; };
+    const handled = {
+      "?": () => toggleKeys(),
+      j: () => select(Math.min(S.items.length - 1, S.cur + 1)),
+      k: () => select(Math.max(0, S.cur - 1)),
+      ArrowDown: () => S.items.length && select(Math.min(S.items.length - 1, S.cur + 1)),
+      ArrowUp: () => S.items.length && select(Math.max(0, S.cur - 1)),
+      a: () => click('button[data-act="approve"]'),
+      r: () => click('button[data-act="reject"]'),
+      c: () => click('button[data-act="correct"]'),
+      v: () => click('button[data-act="vendor"]'),
+      u: () => $("file").click(),
+      b: () => $("runall").click(),
+    }[e.key];
+    if (handled && !(e.key.startsWith("Arrow") && !S.items.length)) { e.preventDefault(); handled(); }
+  });
 }
 
 function cap(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
