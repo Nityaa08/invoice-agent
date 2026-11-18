@@ -20,6 +20,10 @@ dependencies = [
     "pypdf>=6.0,<7",
 ]
 
+[project.optional-dependencies]
+# The MCP server (python -m invoice_agent.mcp_server). Kept out of the Vercel bundle.
+mcp = ["mcp>=2.1,<3"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

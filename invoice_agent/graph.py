@@ -134,6 +134,18 @@ def review_reasons(state: InvoiceState) -> list[str]:
     return [f"{r['name']}: {r['detail']}" for r in state.get("rules", []) if not r["passed"]]
 
 
+def rule_context(deps: Deps, match: VendorMatch, document_text: str = "") -> RuleContext:
+    """What the rules see: today, the vendor match, what is on file, open POs. Used by the graph and by MCP."""
+    return RuleContext(
+        today=deps.today(),
+        vendor_match=match,
+        seen_invoices=deps.store.seen_invoices(),
+        purchase_orders=deps.purchase_orders,
+        po_spent=deps.store.po_spent(),
+        document_text=document_text,
+    )
+
+
 def build_graph(deps: Deps):
     """Return the uncompiled StateGraph; compile it with a checkpointer."""
 
@@ -189,14 +201,7 @@ def build_graph(deps: Deps):
         }
 
     def validate(state: InvoiceState) -> dict:
-        ctx = RuleContext(
-            today=deps.today(),
-            vendor_match=_match_from_state(state),
-            seen_invoices=deps.store.seen_invoices(),
-            purchase_orders=deps.purchase_orders,
-            po_spent=deps.store.po_spent(),
-            document_text=state.get("text") or "",
-        )
+        ctx = rule_context(deps, _match_from_state(state), state.get("text") or "")
         results = [r.__dict__ for r in run_rules(Invoice.model_validate(state["invoice"]), ctx)]
         # Anything the extractor approximated is a failed check, so a human confirms it.
         # A reviewer's correction replaces the extracted fields, so the notes no longer apply.
