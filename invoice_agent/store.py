@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS ledger (
     source TEXT NOT NULL,
     PRIMARY KEY (vendor_key, invoice_number)
 );
+CREATE TABLE IF NOT EXISTS po_paid (
+    po_key TEXT NOT NULL,
+    vendor_key TEXT NOT NULL,
+    invoice_number TEXT NOT NULL,
+    amount REAL NOT NULL,
+    PRIMARY KEY (vendor_key, invoice_number)
+);
 CREATE TABLE IF NOT EXISTS vendors (
     vendor_id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -122,13 +129,21 @@ class InvoiceStore:
     def seed_ledger(self, paid_invoices: list[dict[str, Any]]) -> None:
         for paid in paid_invoices:
             self.add_to_ledger(paid["vendor_id"], paid["invoice_number"], "paid_invoices.json")
+            if paid.get("po_number"):  # already paid against a PO: it counts toward the PO's balance
+                with self._lock, self._conn:
+                    self._conn.execute(
+                        "INSERT OR IGNORE INTO po_paid (po_key, vendor_key, invoice_number, amount) VALUES (?, ?, ?, ?)",
+                        (normalize_id(paid["po_number"]), paid["vendor_id"], normalize_id(paid["invoice_number"]),
+                         paid["total"]))
 
     def po_spent(self) -> dict[str, Decimal]:
-        """Totals of approved invoices per PO (normalized PO number), for the PO balance check."""
+        """Totals paid (paid_invoices.json) or approved here per PO (normalized PO number), for the PO balance check."""
         rows = self._conn.execute(
             "SELECT invoice_json FROM invoices WHERE status IN ({}) AND invoice_json IS NOT NULL".format(
                 ",".join("?" * len(APPROVED_STATUSES))), sorted(APPROVED_STATUSES)).fetchall()
         spent: dict[str, Decimal] = {}
+        for p in self._conn.execute("SELECT po_key, amount FROM po_paid").fetchall():
+            spent[p["po_key"]] = spent.get(p["po_key"], Decimal("0")) + money(p["amount"])
         for r in rows:
             inv = json.loads(r["invoice_json"])
             if inv.get("po_number"):

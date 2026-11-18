@@ -32,7 +32,7 @@ from typing_extensions import TypedDict
 
 from . import ingest as ingest_mod
 from .extractors import NOTES_KEY, ExtractionError, Extractor
-from .rules import PurchaseOrder, RuleContext, VendorMatch, duplicate_key, run_rules
+from .rules import GoodsReceipt, PurchaseOrder, RuleContext, VendorMatch, duplicate_key, run_rules
 from .schema import Invoice
 from .store import InvoiceStore
 from .vendors import VendorMatcher
@@ -77,6 +77,7 @@ class Deps:
     store: InvoiceStore
     purchase_orders: dict[str, PurchaseOrder] = field(default_factory=dict)
     today: Callable[[], date] = date.today
+    goods_receipts: dict[str, tuple[GoodsReceipt, ...]] = field(default_factory=dict)
 
 
 def _match_from_state(state: InvoiceState) -> VendorMatch:
@@ -143,6 +144,7 @@ def rule_context(deps: Deps, match: VendorMatch, document_text: str = "") -> Rul
         purchase_orders=deps.purchase_orders,
         po_spent=deps.store.po_spent(),
         document_text=document_text,
+        goods_receipts=deps.goods_receipts,
     )
 
 

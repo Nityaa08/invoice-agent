@@ -1,5 +1,6 @@
 [
-  {"vendor_id": "V002", "invoice_number": "BP-10388", "total": 1861.90, "paid_on": "2026-09-30"},
-  {"vendor_id": "V001", "invoice_number": "NW-2026-0098", "total": 12980.00, "paid_on": "2026-08-14"},
-  {"vendor_id": "V006", "invoice_number": "OFM/26/311", "total": 88500.00, "paid_on": "2026-10-03"}
+  {"vendor_id": "V002", "invoice_number": "BP-10388", "total": 1861.9, "paid_on": "2026-09-30"},
+  {"vendor_id": "V001", "invoice_number": "NW-2026-0098", "total": 12980.0, "paid_on": "2026-08-14"},
+  {"vendor_id": "V006", "invoice_number": "OFM/26/311", "total": 88500.0, "paid_on": "2026-10-03"},
+  {"vendor_id": "V007", "invoice_number": "LA-2026-097", "total": 6000.0, "paid_on": "2026-10-20", "po_number": "PO-6610"}
 ]

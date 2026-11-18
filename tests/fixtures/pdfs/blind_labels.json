@@ -6,7 +6,7 @@
       "file": "blind_uk_invoice.pdf",
       "title": "UK sales invoice (Invoice Ref, Tax Point / Date, 5th November 2026, pounds, Invoice Total)",
       "decision": "review",
-      "failed_rules": ["matches_purchase_order", "vendor_is_known"],
+      "failed_rules": ["matches_goods_receipt", "matches_purchase_order", "vendor_is_known"],
       "expected": {
         "vendor_name": "Thistle & Pine Joinery Ltd", "vendor_tax_id": "GB284193762",
         "invoice_number": "TPJ-4471", "invoice_date": "2026-11-05", "due_date": null,

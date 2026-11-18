@@ -1,0 +1,7 @@
+[
+  {"grn_number": "GRN-4410", "po_number": "PO-7781", "received_on": "2026-10-01", "lines": [{"description": "A4 copier paper, box of 5 reams", "quantity": 10}, {"description": "Laser toner cartridge, black", "quantity": 2}]},
+  {"grn_number": "GRN-4471", "po_number": "PO-7781", "received_on": "2026-11-08", "lines": [{"description": "A4 copier paper, 500 sheets", "quantity": 20}, {"description": "Laser toner cartridge", "quantity": 4}]},
+  {"grn_number": "GRN-4520", "po_number": "PO-7810", "received_on": "2026-11-06", "lines": [{"description": "Ergonomic office chair", "quantity": 8}, {"description": "Monitor arm, single", "quantity": 10}]},
+  {"grn_number": "GRN-5102", "po_number": "PO-3300", "received_on": "2026-10-18", "lines": [{"description": "Vinyl banners, 3m x 1m", "quantity": 5}]},
+  {"grn_number": "GRN-5140", "po_number": "PO-3300", "received_on": "2026-11-05", "lines": [{"description": "Window graphics, printed and fitted", "quantity": 4}, {"description": "Design proofs", "quantity": 1}]}
+]

@@ -30,7 +30,7 @@ from langgraph.types import Command
 from .config import DATA_DIR, Settings
 from .extractors import Extractor, build_extractor
 from .graph import Deps, build_graph, validate_decision
-from .rules import PurchaseOrder, normalize_id
+from .rules import GoodsReceipt, PurchaseOrder, ReceiptLine, normalize_id
 from .store import InvoiceStore
 from .vendors import VendorMatcher, check_new_vendor
 
@@ -52,6 +52,15 @@ def idempotency_key(data: bytes) -> str:
 def load_purchase_orders(path: Path = DATA_DIR / "purchase_orders.json") -> dict[str, PurchaseOrder]:
     rows = json.loads(path.read_text(encoding="utf-8"))
     return {normalize_id(r["po_number"]): PurchaseOrder(**r) for r in rows}
+
+
+def load_goods_receipts(path: Path = DATA_DIR / "goods_receipts.json") -> dict[str, tuple[GoodsReceipt, ...]]:
+    out: dict[str, list[GoodsReceipt]] = {}
+    for r in json.loads(path.read_text(encoding="utf-8")):
+        grn = GoodsReceipt(r["grn_number"], r["po_number"], r["received_on"],
+                           tuple(ReceiptLine(x["description"], float(x["quantity"])) for x in r["lines"]))
+        out.setdefault(normalize_id(r["po_number"]), []).append(grn)
+    return {k: tuple(v) for k, v in out.items()}
 
 
 def load_paid_invoices(path: Path = DATA_DIR / "paid_invoices.json") -> list[dict[str, Any]]:
@@ -96,6 +105,7 @@ class InvoiceService:
             matcher=matcher or default_matcher(),
             store=store,
             purchase_orders=load_purchase_orders(),
+            goods_receipts=load_goods_receipts(),
             today=(lambda: as_of) if as_of else date.today,
         )
 

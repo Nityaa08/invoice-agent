@@ -62,6 +62,25 @@ class PurchaseOrder:
     vendor_id: str
     currency: str
     amount: float
+    # Goods: an invoice may only bill what a goods receipt (GRN) says arrived.
+    # Services (consulting, catering) have no receipt to match.
+    requires_receipt: bool = False
+
+
+@dataclass(frozen=True)
+class ReceiptLine:
+    description: str
+    quantity: float
+
+
+@dataclass(frozen=True)
+class GoodsReceipt:
+    """A goods received note: what the warehouse counted in against a PO."""
+
+    grn_number: str
+    po_number: str
+    received_on: str
+    lines: tuple[ReceiptLine, ...]
 
 
 @dataclass(frozen=True)
@@ -88,6 +107,8 @@ class RuleContext:
     po_spent: dict[str, Decimal] = field(default_factory=dict)
     # The text the extractor read, for the checks that look at the whole document.
     document_text: str = ""
+    # Goods receipts per PO (normalized PO number), for the three-way match.
+    goods_receipts: dict[str, tuple[GoodsReceipt, ...]] = field(default_factory=dict)
 
 
 def money(value: float) -> Decimal:
@@ -316,13 +337,69 @@ def matches_purchase_order(invoice: Invoice, ctx: RuleContext) -> RuleResult:
         problems.append(f"invoice total {money(invoice.total)} exceeds the PO amount {money(po.amount)}")
     elif money(invoice.total) > left + MONEY_TOLERANCE:
         problems.append(f"invoice total {money(invoice.total)} exceeds what is left on the PO: {money(po.amount)} "
-                        f"minus {spent} already approved = {left}")
+                        f"minus {spent} already paid or approved = {left}")
     if problems:
         return RuleResult("matches_purchase_order", False, "; ".join(problems))
-    used = f", {spent} already approved" if spent else ""
+    used = f", {spent} already paid or approved" if spent else ""
     return RuleResult(
         "matches_purchase_order", True, f"within PO {po.po_number} ({po.currency} {money(po.amount)}{used})"
     )
+
+
+_STOP = {"of", "and", "the", "a", "an", "for", "with", "per", "x", "pack", "box"}
+LINE_MATCH_THRESHOLD = 0.5
+
+
+def _words(text: str) -> frozenset[str]:
+    return frozenset(w for w in re.findall(r"[a-z0-9]+", fold(text).lower()) if w not in _STOP)
+
+
+def _similarity(a: str, b: str) -> float:
+    """Word overlap (Jaccard) between two line descriptions; 1.0 for the same words in any order."""
+    wa, wb = _words(a), _words(b)
+    return len(wa & wb) / len(wa | wb) if wa and wb else 0.0
+
+
+def matches_goods_receipt(invoice: Invoice, ctx: RuleContext) -> RuleResult:
+    """Three-way match: PO + goods receipt + invoice. Bill only what was received.
+
+    Receipts against the PO are added up per item; each invoice line is paired
+    with the received item whose description shares the most words, and its
+    quantity may not exceed what was received.
+    """
+    name = "matches_goods_receipt"
+    if not invoice.po_number:
+        return RuleResult(name, True, "no PO on the invoice, so no goods receipt to match")
+    key = normalize_id(invoice.po_number)
+    po = ctx.purchase_orders.get(key)
+    if po is None:
+        return RuleResult(name, True, "PO not found, so no receipt to match (matches_purchase_order reports it)")
+    receipts = ctx.goods_receipts.get(key, ())
+    if not receipts:
+        if po.requires_receipt:
+            return RuleResult(name, False, f"PO {po.po_number} is for goods, but no goods receipt has been recorded "
+                                           "against it yet: nothing to bill for")
+        return RuleResult(name, True, f"PO {po.po_number} is for services; no goods receipt needed")
+    received: dict[str, float] = {}
+    for grn in receipts:
+        for line in grn.lines:
+            received[line.description] = received.get(line.description, 0.0) + line.quantity
+    billed: dict[str, float] = {}
+    problems = []
+    for item in invoice.line_items:
+        best, score = max(((d, _similarity(item.description, d)) for d in received), key=lambda t: t[1])
+        if score < LINE_MATCH_THRESHOLD:
+            problems.append(f"'{item.description}' is not on any goods receipt for {po.po_number}")
+            continue
+        billed[best] = billed.get(best, 0.0) + item.quantity
+    for desc, qty in billed.items():
+        if qty > received[desc] + 1e-9:
+            problems.append(f"billed {qty:g} x '{desc}' but only {received[desc]:g} received")
+    grns = ", ".join(g.grn_number for g in receipts)
+    if problems:
+        return RuleResult(name, False, "; ".join(problems) + f" (goods receipts: {grns})")
+    n = len(invoice.line_items)
+    return RuleResult(name, True, f"{n} line{'s' if n > 1 else ''} within the quantities received ({grns})")
 
 
 def no_lookalike_characters(invoice: Invoice, ctx: RuleContext) -> RuleResult:
@@ -364,6 +441,7 @@ RULES = (
     vendor_tax_id_is_valid,
     not_a_duplicate,
     matches_purchase_order,
+    matches_goods_receipt,
     no_lookalike_characters,
     no_instructions_in_document,
 )

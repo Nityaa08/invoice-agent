@@ -298,7 +298,8 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
     @app.head("/api/samples", include_in_schema=False)
     @app.get("/api/samples")
     def samples():
-        return _json([{"file": s["file"], "title": s["title"], "decision": s["decision"]} for s in load_manifest()],
+        return _json([{"file": s["file"], "title": s["title"], "decision": s["decision"], "group": s.get("group", "sample")}
+                      for s in load_manifest()],
                      CACHE_STATIC)
 
     @app.head("/api/samples/{name}", include_in_schema=False)

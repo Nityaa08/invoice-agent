@@ -46,7 +46,9 @@ def test_page_config_and_samples(full):
         "as_of_uploads": "2026-11-13", "max_upload_mb": 4,
     }
     samples = full.get("/api/samples").json()
-    assert len(samples) == 11 and samples[0]["file"] == "01_northwind_ok.pdf"
+    assert len(samples) == 13 and samples[0]["file"] == "01_northwind_ok.pdf"
+    assert {s["file"] for s in samples if s["group"] == "attack"} == {
+        "05_bluepeak_duplicate.txt", "11_orbit_hidden_instructions.pdf", "13_lumen_split_po.txt"}
     assert full.get("/api/samples/01_northwind_ok.pdf").content.startswith(b"%PDF")
     assert full.get("/api/samples/..%2Fmain.py").status_code == 404
 

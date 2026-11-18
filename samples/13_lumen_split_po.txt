@@ -1,0 +1,19 @@
+TAX INVOICE
+Lumen Analytics Pte Ltd
+1 Fusionopolis Way, Singapore 138632
+
+Invoice No: LA-2026-121
+Invoice Date: 2026-11-07
+Due Date: 2026-12-07
+PO Number: PO-6610
+Currency: SGD
+
+Description                                      Qty    Unit Price        Amount
+--------------------------------------------------------------------------------
+Analytics retainer, phase 2                        1      5,000.00      5,000.00
+--------------------------------------------------------------------------------
+                                                             Subtotal: 5,000.00
+                                                                GST 9%: 450.00
+                                                                 Total: 5,450.00
+
+Thank you for your business.

@@ -177,7 +177,7 @@ def test_rt_po_cannot_be_overspent_by_splitting_the_bill(tmp_path):
     assert first["status"] == "auto_approved"
     assert second["status"] == "needs_review"
     po = next(r for r in second["rules"] if r["name"] == "matches_purchase_order")
-    assert not po["passed"] and "already approved" in po["detail"]
+    assert not po["passed"] and "already paid or approved" in po["detail"]
 
 
 # --- injection ------------------------------------------------------------------------
