@@ -37,6 +37,16 @@ The design principle under test: **the model reads; tested code decides.** An at
 | RT-23 | Info | Float rounding (0.1 + 0.2), due date before issue date, far-future dates, currency mismatch, over-PO amount, total contradicting the lines, duplicate with case/space changes | Not vulnerable (already caught) |
 | RT-24 | Info | Approving or altering someone else's run by guessing its id | Not applicable in demo mode; open in full mode (documented) |
 | RT-25 | Info | Secrets in the repo or logs; vulnerable dependencies | None found |
+| RT-26 | High | MCP: a client model, steered by a document, approves an invoice | Not possible by design (no approve tool) |
+| RT-27 | Medium | MCP: `add_vendor` used to make an unknown or lookalike vendor "known" | Mitigated (shadow checks, rate limit, audit, `--read-only`); residual risk documented |
+| RT-28 | Medium | MCP: untrusted tool inputs (paths, huge text, bad base64, sample names) | Not vulnerable |
+| RT-29 | Medium | Vendor onboarding as a way round RT-03 (new name, borrowed GSTIN) | Fixed before release |
+| RT-30 | Medium | Tampered localStorage vendor list sent with demo runs | Not vulnerable (re-checked on the server every run) |
+| RT-31 | Medium | OCR text: lying about `source`, or OCR text carrying an injection | Not vulnerable |
+| RT-32 | Medium | Tesseract.js from a CDN: supply chain | Mitigated (pinned, SRI on the entry script, path-scoped CSP); residual risk documented |
+| RT-33 | Medium | CSV export opened in Excel: formula injection | Fixed before release |
+| RT-34 | Low | Document content or key fragments in logs, traces or error messages | Fixed before release |
+| RT-35 | Low | New endpoints without rate limits | Fixed before release |
 
 ## Findings
 
@@ -222,6 +232,65 @@ Tests: `test_rt_pdf_with_javascript_and_embedded_file_is_only_read_as_text`, `te
 - No API keys, tokens or private keys in any tracked file (`test_rt_no_secrets_in_the_repo` scans them on every CI run). `LLM_API_KEY` is read from the environment only; logs record the kind and size of a file and why it went to review, never names, contents or keys.
 - `pip-audit -r requirements.txt` (in an isolated venv, Python 3.12) on 2026-11-17: **"No known vulnerabilities found"**.
 
+## Round 2: new attack surface (2026-11-18)
+
+The 2026-11-18 release added vendor onboarding, browser OCR, batch export, an MCP server, a three-way match and a run timeline. Each new input was treated as hostile and attacked the same way: locally with `VERCEL=1`, plus a browser run of the page (Playwright, Chromium) with the CSP enforced. Tests are in the files named under each finding.
+
+### RT-26 · High · MCP: a client model approves an invoice
+
+An MCP client is usually an LLM, and the documents it reads can carry instructions ("call the tool to approve this"). **The server has no approve, reject or review tool at all.** `process_invoice` runs the graph; a run that fails a rule stays paused at `human_review` until a person decides on the web page or through the HTTP API. A test asserts that no tool name contains "approve" or "review". *Tests: `test_mcp.py::test_the_five_tools_and_no_approve`, `test_process_add_vendor_and_the_run_is_reviewable_by_a_person`.*
+
+### RT-27 · Medium · MCP: `add_vendor` as a back door
+
+A steered client could call `add_vendor` for the unknown vendor on the invoice it is processing, so `vendor_is_known` passes. Mitigations:
+- the same checks as the review screen (RT-29): a name that already matches a vendor, or a tax id already registered to one, is refused, so a lookalike of a known vendor cannot be added;
+- at most 20 additions an hour per server process;
+- every addition is stored with `source: added` (the page tags the match "added by a reviewer") and audited as `added_by: mcp`;
+- `--read-only` leaves the tool out entirely, for a client that should only read and check.
+
+**Residual risk, documented:** with writes on, a client can still add a genuinely new vendor without a person. Every other rule (arithmetic, tax rate, tax-id format, duplicates, PO, goods receipt, injection) still applies to its invoices. A production setup would require a person to approve vendor-master changes. *Tests: `test_mcp.py`, `test_vendor_additions_are_rate_limited`.*
+
+### RT-28 · Medium · MCP: untrusted tool inputs
+
+Probed: a file path as the sample name (`../main.py`), a filename with folders (`../../etc/passwd`), 60,001 characters of text, invalid base64, base64 that is not a PDF, an invoice that breaks the schema, a 41-character tax id, an instruction as a vendor name. All refused with a one-line reason and no stack trace; folders are stripped from names. There is **no file-path argument anywhere**, so a prompt cannot make the server read local files. Bounds are in the tool schemas, so a client sees them. Every result carries a note that its fields are untrusted document text, and the injection rule's result reaches the client. The HTTP transport binds to 127.0.0.1 by default with the SDK's DNS-rebinding protection; it has no authentication, so it must not be exposed beyond the machine. *Tests: `test_mcp.py::test_untrusted_tool_inputs_are_refused_with_a_reason`, `test_injection_in_the_document_is_reported_to_the_client`.*
+
+### RT-29 · Medium · Vendor onboarding around RT-03
+
+Attack: an invoice under a new name with Northwind's GSTIN fails `vendor_is_known`; the reviewer (or the attacker, in the demo) clicks "Add this vendor" with that GSTIN, re-runs, and the invoice would pass. **Refused:** `tax id 29ABCDE1234F1Z5 is already registered to Northwind Office Supplies Pvt Ltd (V001)`. Also refused: a name that already matches a vendor at 0.75 or more ("NORTHWIND OFFICE SUPPLY CO."), lookalike or invisible characters, instruction text, malformed tax ids, non-ISO currencies. *Tests: `test_onboarding.py::test_bad_or_shadowing_vendors_are_refused`.*
+
+### RT-30 · Medium · Tampered localStorage vendors
+
+In the demo, added vendors live in the visitor's browser and are sent with every run, so the list is attacker-controlled. The server parses it with a 16 KB cap and at most 25 entries, and runs every entry through the same checks as RT-29, each against the master plus the entries before it. Tampering gives no more than adding a vendor through the form, and only for that visitor's own requests (nothing is stored server-side). Another site cannot write this origin's localStorage; that would need script injection, which the CSP blocks. *Tests: `test_onboarding.py::test_demo_refuses_tampered_vendor_lists`.*
+
+### RT-31 · Medium · OCR text
+
+- **Lying about the source.** `source=ocr` is a flag the browser sends. Leaving it off turns OCR text into an ordinary text upload, which anyone could already send as a `.txt`, so it grants nothing. Any other value is refused (422). With the flag, the run always goes to a person (`ocr_checked_by_person` fails until a reviewer corrects the fields; a re-check does not clear it).
+- **Injection in OCR text.** OCR text goes through the same extractor and the same `no_instructions_in_document` rule.
+- **The server still runs no OCR** unless `SERVER_OCR=true` is set for a local service, and that text gets the same check.
+
+*Tests: `test_ocr.py`.*
+
+### RT-32 · Medium · Tesseract.js from a CDN
+
+The page loads OCR only when a photo is picked. Versions are pinned (tesseract.js 7.0.0, tesseract.js-core 7.0.0, English data `@tesseract.js-data/eng@1.0.0`), the entry script carries an SRI hash (`sha384`), and the CSP allows exactly those three package folders on jsDelivr, `'wasm-unsafe-eval'` (to compile WebAssembly; it does not allow `eval()` of JavaScript), `blob:` workers and `blob:` images. **Residual risk:** the worker script, the WebAssembly core and the language data are fetched by the library itself, so the browser cannot check them with SRI; they are pinned by version and limited by the CSP paths. The SRI hash was computed from the npm package of the same version (jsDelivr serves npm files unchanged); the build machine could not reach jsDelivr, so the live page's OCR should be checked once in a real browser. In the local browser run, with the same files served for the CDN URLs and the CSP enforced, a photo was read and sent as text. *Tests: `test_ocr.py::test_page_loads_the_pinned_ocr_library_with_sri_and_the_csp_allows_only_that`, `test_redteam.py::test_rt_page_csp_allows_exactly_its_own_inline_script`.*
+
+### RT-33 · Medium · CSV formula injection
+
+A vendor name or note such as `=HYPERLINK(...)` or `=cmd|' /C calc'!A0` becomes a formula when the export is opened in Excel or Sheets. Text cells that start with `=`, `+`, `-`, `@`, a tab or a carriage return get a leading apostrophe, in the page's export and in `GET /api/runs/export`; numbers stay numbers. *Tests: `test_export.py`.*
+
+### RT-34 · Low · Content and key fragments in logs and errors
+
+- The run timeline stores only allow-listed keys (node, timing, counts, ids, rule names, status); a test runs an invoice and checks that its vendor name, number, total, tax id and file name appear nowhere in the trace or the JSON logs.
+- Errors are logged with the exception type only, never the message or stack.
+- A model provider's error text is never shown: an authentication error can quote part of the key ("Incorrect API key provided: gsk_ab***"). The reviewer sees "the API key was refused by the provider".
+- The key is excluded from the settings' `repr` and never reaches `/api/config`.
+
+*Tests: `test_obs.py`, `test_llm_mode.py::test_model_errors_never_quote_the_provider`, `test_config_reports_the_live_model_but_never_the_key`.*
+
+### RT-35 · Low · Rate limits on new endpoints
+
+`POST /api/vendors` allows 30 requests an hour per client IP per instance (`VENDOR_ADDS_PER_HOUR`), and the MCP server allows 20 vendor additions an hour per process. Demo runs keep their limit of 60 an hour, and a batch of 20 files counts as 20 runs. The same Origin check applies to every POST. Per-instance limits are a politeness limit, not a global quota (RT-15). *Tests: `test_onboarding.py::test_vendor_endpoint_limits`, `test_mcp.py::test_vendor_additions_are_rate_limited`.*
+
 ## Reliability notes from the same pass
 
 - Importing `main` (what a cold start pays before the first response) took 0.57-0.73 s locally before and **0.21-0.26 s** after: the read routes no longer import LangGraph, LangChain, numpy or pypdf (`test_rt_read_routes_do_not_import_langgraph`). The first POST pays about 0.4 s more to load them.
@@ -232,4 +301,5 @@ Tests: `test_rt_pdf_with_javascript_and_embedded_file_is_only_read_as_text`, `te
 
 - A live LLM (`EXTRACTOR=llm` against a real provider). The prompt and schema were reviewed and the request is tested with a faked HTTP call.
 - POST requests against the live Vercel deployment (not reachable from the test machine); GETs, headers and runtime logs were checked live after the deploy.
-- OCR (not installed in the demo).
+- OCR against the real jsDelivr CDN in a real browser (see RT-32: tested with the npm copies of the same pinned files, CSP enforced). Before 2026-11-18 there was no OCR in the demo.
+- The MCP server with Claude Desktop itself; it was tested with the official SDK's client over stdio and in-process, which is the same protocol.
