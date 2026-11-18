@@ -2,6 +2,8 @@
 
 Full service (default, `uvicorn main:app`):
     POST /invoices                 upload a file (or pick a sample) -> runs the graph
+    GET  /api/runs                 the latest runs (a review queue)
+    GET  /api/runs/export          the runs as CSV or JSON (?format=json)
     GET  /invoices/{id}            the run: extracted JSON, rule results, path, pending review
     POST /invoices/{id}/review     approve / reject / correct / recheck -> resumes the paused graph
 
@@ -254,7 +256,7 @@ def install_hardening(app: FastAPI) -> None:
         else:
             csp = API_CSP
         response.headers.setdefault("Content-Security-Policy", csp)
-        if request.method == "POST" or path.startswith("/invoices"):
+        if request.method == "POST" or path.startswith(("/invoices", "/api/runs")):
             response.headers.setdefault("Cache-Control", NO_STORE)
         return response
 
@@ -354,6 +356,26 @@ def _register_full(app: FastAPI, settings: Settings):
         run, created = service.submit(filename, data, source=origin)
         # Same file again: 200 with the original run instead of a second one.
         return run if created else JSONResponse(run, status_code=200)
+
+    @app.get("/api/runs")
+    def list_runs(limit: int = 100):
+        """The latest runs (a review queue: filter on status == needs_review)."""
+        limit = max(1, min(limit, 500))
+        return [{k: r[k] for k in ("id", "filename", "created_at", "status", "source")}
+                | {"failed_rules": [x["name"] for x in r["rules"] if not x["passed"]]}
+                for r in service.list_runs(limit)]
+
+    @app.get("/api/runs/export")
+    def export_runs(format: str = "csv", limit: int = 500):
+        from .export import export_row, to_csv
+
+        rows = [export_row(r) for r in service.list_runs(max(1, min(limit, 500)))]
+        if format == "json":
+            return JSONResponse(rows, headers={"Content-Disposition": 'attachment; filename="invoice-agent-runs.json"'})
+        if format != "csv":
+            raise HTTPException(422, "format must be csv or json")
+        return Response(to_csv(rows), media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="invoice-agent-runs.csv"'})
 
     @app.get("/invoices/{run_id}")
     def get_run(run_id: str):

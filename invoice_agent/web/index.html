@@ -108,6 +108,15 @@ img.photo{display:block;max-width:100%;max-height:520px;margin-top:8px;border:1p
 .vendors li{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
 .vendors code{color:var(--ink-3);font-size:11px}
 .linkbtn{font:inherit;font-size:12.5px;background:none;border:0;color:var(--ink-2);text-decoration:underline;cursor:pointer;padding:0}
+.btn.small{font-size:13px;padding:6px 12px}
+.queue{list-style:none;display:grid;grid-template-columns:minmax(0,1fr);gap:6px;max-height:340px;overflow:auto}
+.queue li{min-width:0}
+.queue button{width:100%;display:flex;justify-content:space-between;align-items:center;gap:10px;font:inherit;font-size:13.5px;text-align:left;background:var(--bg);color:var(--ink);border:1px solid var(--line);border-radius:10px;padding:7px 10px;cursor:pointer}
+.queue button[aria-current="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.qname{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.qname small{display:block;color:var(--ink-3);font-size:11.5px;overflow:hidden;text-overflow:ellipsis}
+.qpill{flex:none;font-size:11px;font-weight:700;letter-spacing:.03em;text-transform:uppercase;border-radius:6px;padding:2px 7px;background:var(--chip);color:var(--ink-2)}
+.qpill.ok{background:var(--ok-bg);color:var(--ok)} .qpill.bad{background:var(--bad-bg);color:var(--bad)} .qpill.wait{background:var(--warn-bg);color:var(--warn)}
 .tag{font-size:11px;font-weight:600;border-radius:6px;padding:1px 7px;background:var(--chip);color:var(--ink-2)}
 footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);font-size:13px}
 @media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)} nav .hide-sm{display:none}}
@@ -135,14 +144,25 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
   <div class="grid">
     <div class="col">
       <section class="card">
-        <h2>1 · Invoice</h2>
+        <h2>1 · Invoices</h2>
         <ul class="samples" id="samples"></ul>
+        <div class="row" style="margin-top:10px"><button type="button" class="btn ghost small" id="runall">Run all samples as a batch</button></div>
         <label class="drop" id="drop">
-          <input type="file" id="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp">
-          Drop a PDF, a text invoice or a photo here, or click to choose
+          <input type="file" id="file" multiple accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp">
+          Drop PDFs, text invoices or photos here (several at once), or click to choose
         </label>
         <div class="uperr" id="uperr" role="alert" aria-live="polite"></div>
         <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word), or a photo: photos are read by OCR in your browser (Tesseract.js) and only the text is sent; OCR results always go to a person. Do not upload invoices with personal data to the public demo.</p>
+      </section>
+      <section class="card" id="queuecard" hidden>
+        <h2>Queue</h2>
+        <p class="hint" id="queuesum" style="margin:0 0 8px"></p>
+        <ul class="queue" id="queue"></ul>
+        <div class="row" style="margin-top:10px">
+          <button type="button" class="btn ghost small" id="export-csv">Export CSV</button>
+          <button type="button" class="btn ghost small" id="export-json">Export JSON</button>
+          <button type="button" class="linkbtn" id="clearq">clear</button>
+        </div>
       </section>
       <section class="card" id="vendorcard" hidden>
         <h2>Vendors you added</h2>
@@ -187,10 +207,13 @@ const STATUS = {
   needs_review: ["wait", "Needs review", "The graph is paused at human_review."],
   incomplete: ["bad", "Stopped by an error", "Progress is checkpointed; submit the same file again to resume."],
 };
+const MAX_BATCH = 20;
 
-const S = { config: null, input: null, decisions: [], run: null, busy: false, vendors: [] };
+// items: the queue. Each is one invoice: what to send, the review decisions so far, the run.
+const S = { config: null, items: [], cur: -1, busy: false, vendors: [], draining: false, samples: [] };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const current = () => S.items[S.cur];
 
 const HTTP_MESSAGES = {
   413: "The file is too large for the demo.",
@@ -207,10 +230,10 @@ async function api(url, opts) {
   // Only reads are retried automatically; an upload is retried once (it is idempotent:
   // the run id is a hash of the file).
   const tries = (!opts || !opts.method || opts.method === "GET") ? 4 : 2;
-  let res, lastErr;
+  let res;
   for (let i = 0; i < tries; i++) {
     try { res = await fetch(url, opts); break; }
-    catch (e) { lastErr = e; if (i < tries - 1) await sleep(700 * (i + 1)); }
+    catch (e) { if (i < tries - 1) await sleep(700 * (i + 1)); }
   }
   if (!res) throw new Error("Could not reach the server. Check your connection and try again.");
   const body = await res.json().catch(() => null);
@@ -238,8 +261,7 @@ function vendorPayload() { return JSON.stringify(S.vendors.map(({ name, tax_id, 
 async function refreshVendors() {
   if (S.config.demo_mode) { S.vendors = loadVendors(); }
   else { S.vendors = (await api("/api/vendors")).filter((v) => v.source === "added"); }
-  const card = $("vendorcard");
-  card.hidden = !S.vendors.length;
+  $("vendorcard").hidden = !S.vendors.length;
   $("vendorlist").innerHTML = S.vendors.map((v, i) => `<li><span>${esc(v.name)} <code>${esc(v.vendor_id)} · ${esc(v.currency)}${v.tax_id ? " · " + esc(v.tax_id) : ""}</code></span>` +
     (S.config.demo_mode ? `<button type="button" class="linkbtn" data-forget="${i}">remove</button>` : "") + `</li>`).join("");
   $("vendorhint").textContent = S.config.demo_mode
@@ -289,54 +311,221 @@ function loadTesseract() {
 }
 
 async function ocrImage(file, progress) {
-  progress("Loading the OCR library (about 6 MB, once)…");
+  progress("loading OCR (about 6 MB, once)");
   const T = await loadTesseract();
   const worker = await T.createWorker("eng", 1, {
     workerPath: OCR.workerPath, corePath: OCR.corePath, langPath: OCR.langPath,
-    logger: (m) => { if (m.status === "recognizing text") progress(`Reading the photo in your browser… ${Math.round(m.progress * 100)}%`); },
+    logger: (m) => { if (m.status === "recognizing text") progress(`OCR ${Math.round(m.progress * 100)}%`); },
   });
   try { return (await worker.recognize(file)).data.text || ""; }
   finally { worker.terminate(); }
 }
 
-async function pickImage(f) {
-  const box = $("uperr");
-  const progress = (msg) => { box.innerHTML = `<div class="notice warn"><b>OCR</b>${esc(msg)}</div>`; };
+// --- the queue -----------------------------------------------------------------------
+
+function addFiles(files) {
+  $("uperr").innerHTML = "";
+  const list = [...files];
+  const problems = [];
+  if (list.length > MAX_BATCH) problems.push(`Only the first ${MAX_BATCH} files were queued.`);
+  const ok = [];
+  for (const f of list.slice(0, MAX_BATCH)) {
+    const p = checkFile(f);
+    if (p) problems.push(`${f.name}: ${p}`); else ok.push(isImage(f) ? { photoFile: f, label: f.name } : { file: f, label: f.name });
+  }
+  if (problems.length) $("uperr").innerHTML = `<div class="notice"><b>Not queued</b>${problems.map(esc).join("<br>")}</div>`;
+  if (ok.length) enqueue(ok);
+}
+
+function enqueue(inputs) {
+  const first = S.items.length;
+  // One invoice: show its result when it is done (on a phone, scroll to it). A batch: stay on the queue.
+  for (const input of inputs) S.items.push({ input, decisions: [], run: null, state: "queued", note: "", error: null,
+                                            reveal: inputs.length === 1 });
+  S.cur = first;
+  renderQueue(); showCurrent();
+  drain();
+}
+
+async function drain() {
+  if (S.draining) return;
+  S.draining = true;
+  let it;
+  while ((it = S.items.find((x) => x.state === "queued"))) await processItem(it);
+  S.draining = false;
+}
+
+async function processItem(it) {
+  try {
+    if (it.input.photoFile) {
+      it.state = "ocr";
+      const f = it.input.photoFile;
+      const text = await ocrImage(f, (msg) => { it.note = msg; renderQueue(); });
+      if (text.replace(/\W/g, "").length < 20) throw new Error("no readable text was found in this photo; try a sharper, straight-on photo");
+      it.input = { file: new File([text], f.name.replace(/\.[^.]+$/, "") + ".ocr.txt", { type: "text/plain" }),
+                   source: "ocr", image: URL.createObjectURL(f), photo: f.name, label: f.name };
+    }
+    it.state = "running"; it.note = ""; renderQueue();
+    it.run = await send(it, it.decisions);
+    it.state = "done";
+  } catch (err) {
+    it.state = "error"; it.error = err.message;
+  }
+  it.note = "";
+  renderQueue();
+  if (it === current()) showCurrent(it.reveal);
+}
+
+function form(it) {
+  const fd = new FormData();
+  if (it.input.file) fd.append("file", it.input.file); else fd.append("sample", it.input.sample);
+  if (it.input.source) fd.append("source", it.input.source);
+  return fd;
+}
+
+async function send(it, decisions) {
+  if (S.config.demo_mode) {
+    // Serverless keeps nothing between requests, so the page sends the file again
+    // with every decision so far (and the vendors added in this browser) and the
+    // server replays the run.
+    const fd = form(it); fd.append("decisions", JSON.stringify(decisions)); fd.append("vendors", vendorPayload());
+    return api("/api/demo/run", { method: "POST", body: fd });
+  }
+  return api("/invoices", { method: "POST", body: form(it) });
+}
+
+async function review(decision) {
+  const it = current();
   setBusy(true);
   try {
-    const text = await ocrImage(f, progress);
-    if (text.replace(/\W/g, "").length < 20) throw new Error("no readable text was found in this photo; try a sharper, straight-on photo");
-    box.innerHTML = "";
-    const name = f.name.replace(/\.[^.]+$/, "") + ".ocr.txt";
-    setBusy(false);
-    return start({ file: new File([text], name, { type: "text/plain" }), source: "ocr", image: URL.createObjectURL(f), photo: f.name });
-  } catch (err) {
-    box.innerHTML = `<div class="notice"><b>OCR did not work</b>${esc(cap(err.message))}. You can still upload a PDF, or type the fields in after a run.</div>`;
-  }
+    if (S.config.demo_mode) {
+      it.run = await send(it, [...it.decisions, decision]);
+      it.decisions.push(decision);
+    } else {
+      it.run = await api(`/invoices/${encodeURIComponent(it.run.id)}/review`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(decision) });
+    }
+    renderQueue(); showCurrent(true);
+  } catch (err) { const box = $("reviewerr"); if (box) box.textContent = err.message; }
   setBusy(false);
 }
 
-function pickFile(f) {
-  $("uperr").innerHTML = "";
-  const problem = checkFile(f);
-  if (problem) { $("uperr").innerHTML = `<div class="notice"><b>Not uploaded</b>${esc(problem)}</div>`; return; }
-  if (isImage(f)) return pickImage(f);
-  start({ file: f });
+function setBusy(b) {
+  S.busy = b;
+  document.querySelectorAll("#out button").forEach((x) => (x.disabled = b));
 }
+
+const PILL = { queued: ["", "queued"], ocr: ["wait", "reading"], running: ["wait", "running"], error: ["bad", "error"] };
+function pillFor(it) {
+  if (it.state !== "done") return PILL[it.state];
+  const st = it.run.status;
+  const cls = (STATUS[st] || ["", st])[0];
+  const short = { auto_approved: "approved", approved_after_correction: "corrected", approved_by_reviewer: "approved",
+                  approved_after_recheck: "approved", needs_review: "review", rejected: "rejected", incomplete: "stopped" }[st] || st;
+  return [cls, short];
+}
+
+function renderQueue() {
+  $("queuecard").hidden = !S.items.length;
+  const done = S.items.filter((x) => x.state === "done");
+  const counts = {};
+  done.forEach((x) => { const k = pillFor(x)[1]; counts[k] = (counts[k] || 0) + 1; });
+  $("queuesum").textContent = `${S.items.length} invoice${S.items.length === 1 ? "" : "s"}` +
+    (Object.keys(counts).length ? ": " + Object.entries(counts).map(([k, n]) => `${n} ${k}`).join(", ") : "") +
+    (S.items.some((x) => ["queued", "ocr", "running"].includes(x.state)) ? " · working…" : "");
+  $("queue").innerHTML = S.items.map((it, i) => {
+    const [cls, label] = pillFor(it);
+    const inv = it.run && it.run.invoice;
+    const what = it.error ? it.error : it.note || (inv ? `${inv.vendor_name} · ${inv.currency} ${Number(inv.total).toLocaleString()}` : "");
+    return `<li><button type="button" data-item="${i}" aria-current="${i === S.cur}">
+      <span class="qname">${esc(it.input.label || it.input.sample)}<small>${esc(what)}</small></span>
+      <span class="qpill ${cls}">${esc(label)}</span></button></li>`;
+  }).join("");
+  $("export-csv").disabled = $("export-json").disabled = !done.length;
+}
+
+function select(i) {
+  if (i < 0 || i >= S.items.length) return;
+  S.cur = i; renderQueue(); showCurrent(true);
+}
+
+function showCurrent(scroll) {
+  const it = current();
+  document.querySelectorAll("#samples button").forEach((b) =>
+    b.setAttribute("aria-pressed", String(!!it && b.dataset.file === it.input.sample)));
+  if (!it) { $("out").innerHTML = `<section class="card"><div class="empty">Pick a sample to run the graph.</div></section>`; renderPath(null); return; }
+  if (it.state === "error") { renderPath(null); $("out").innerHTML = `<section class="card"><div class="err">${esc(it.input.label || it.input.sample)}: ${esc(it.error)}</div></section>`; return; }
+  if (!it.run) { renderPath(null); $("out").innerHTML = `<section class="card"><div class="empty">${esc(it.input.label || it.input.sample)}: ${esc(it.note || (it.state === "queued" ? "waiting in the queue" : "running the graph"))}…</div></section>`; return; }
+  render(it.run, scroll);
+}
+
+// --- export ----------------------------------------------------------------------------
+// The same columns as GET /api/runs/export in the full service (invoice_agent/export.py).
+const EXPORT_COLUMNS = ["file", "run_id", "status", "decision", "source", "vendor_name", "vendor_id", "vendor_match_score",
+  "invoice_number", "invoice_date", "due_date", "currency", "po_number", "subtotal", "discount", "tax", "total",
+  "failed_rules", "reviewer_action", "reviewer", "review_note"];
+const APPROVED = ["auto_approved", "approved_by_reviewer", "approved_after_correction", "approved_after_recheck"];
+
+function exportRow(run) {
+  const inv = run.invoice || {}, vm = run.vendor_match || {}, d = run.decision || {};
+  return {
+    file: run.filename, run_id: run.id, status: run.status,
+    decision: APPROVED.includes(run.status) ? "approved" : run.status === "rejected" ? "rejected" : "review",
+    source: run.source || "upload", vendor_name: inv.vendor_name ?? null, vendor_id: vm.matched ? vm.vendor_id : null,
+    vendor_match_score: vm.score ?? null, invoice_number: inv.invoice_number ?? null, invoice_date: inv.invoice_date ?? null,
+    due_date: inv.due_date ?? null, currency: inv.currency ?? null, po_number: inv.po_number ?? null,
+    subtotal: inv.subtotal ?? null, discount: inv.discount ?? null, tax: inv.tax ?? null, total: inv.total ?? null,
+    failed_rules: (run.rules || []).filter((r) => !r.passed).map((r) => r.name).join("; ") || (run.invoice ? "" : "extraction_failed"),
+    reviewer_action: d.action || null, reviewer: d.reviewer || null, review_note: d.note || null,
+  };
+}
+
+// A cell that starts with = + - @ (or a tab / CR) runs as a formula in Excel or Sheets;
+// text from an invoice is untrusted, so such text cells get a leading apostrophe.
+function csvCell(v) {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "number") return String(v);
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  return /[",\n\r]/.test(s) || s !== s.trim() ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function download(name, type, text) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = document.createElement("a");
+  a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportRuns(kind) {
+  const rows = S.items.filter((x) => x.state === "done").map((x) => exportRow(x.run));
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  if (kind === "json") return download(`invoice-agent-${stamp}.json`, "application/json", JSON.stringify(rows, null, 2));
+  const lines = [EXPORT_COLUMNS.join(","), ...rows.map((r) => EXPORT_COLUMNS.map((c) => csvCell(r[c])).join(","))];
+  download(`invoice-agent-${stamp}.csv`, "text/csv", lines.join("\r\n") + "\r\n");
+}
+
+// --- page set-up ---------------------------------------------------------------------
 
 function wireUpload() {
   $("file").addEventListener("change", (e) => {
-    const f = e.target.files[0];
+    const files = [...e.target.files];
     e.target.value = "";  // so choosing the same file again fires "change" again
-    if (f) pickFile(f);
+    if (files.length) addFiles(files);
   });
   const drop = $("drop");
   drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("over"); });
   drop.addEventListener("dragleave", () => drop.classList.remove("over"));
   drop.addEventListener("drop", (e) => {
     e.preventDefault(); drop.classList.remove("over");
-    if (e.dataTransfer.files[0]) pickFile(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
   });
+}
+
+function sampleButton(s) {
+  return `<li><button type="button" data-file="${esc(s.file)}" aria-pressed="false">
+      <span>${esc(s.title)}</span><small>${s.decision === "auto_approve" ? "expect: approve" : "expect: review"}</small>
+    </button></li>`;
 }
 
 async function init() {
@@ -352,14 +541,21 @@ async function init() {
       (S.config.as_of ? ` Sample dates are checked as of ${esc(S.config.as_of)}${S.config.as_of_uploads === "today" ? "; uploads as of today" : ""}.` : "") +
       (S.config.demo_mode ? ` Nothing is stored: each run lives in one request.` : "");
   }
-  const samples = await api("/api/samples");
-  $("samples").innerHTML = samples.map((s) => `
-    <li><button type="button" data-file="${esc(s.file)}" aria-pressed="false">
-      <span>${esc(s.title)}</span><small>${s.decision === "auto_approve" ? "expect: approve" : "expect: review"}</small>
-    </button></li>`).join("");
-  $("samples").addEventListener("click", (e) => {
+  S.samples = await api("/api/samples");
+  $("samples").innerHTML = S.samples.map(sampleButton).join("");
+  document.querySelector(".col").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-file]");
-    if (b) start({ sample: b.dataset.file });
+    if (b) return enqueue([{ sample: b.dataset.file, label: b.dataset.file }]);
+    const q = e.target.closest("button[data-item]");
+    if (q) return select(Number(q.dataset.item));
+  });
+  $("runall").addEventListener("click", () => enqueue(S.samples.map((s) => ({ sample: s.file, label: s.file }))));
+  $("export-csv").addEventListener("click", () => exportRuns("csv"));
+  $("export-json").addEventListener("click", () => exportRuns("json"));
+  $("clearq").addEventListener("click", () => {
+    if (S.draining) return;
+    S.items.forEach((x) => x.input.image && URL.revokeObjectURL(x.input.image));
+    S.items = []; S.cur = -1; renderQueue(); showCurrent();
   });
   $("vendorlist").addEventListener("click", (e) => {
     const b = e.target.closest("button[data-forget]");
@@ -367,69 +563,8 @@ async function init() {
     S.vendors.splice(Number(b.dataset.forget), 1); saveVendors(); refreshVendors();
   });
   await refreshVendors().catch(() => {});
-  $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB. ` + $("uphint").textContent;
+  $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB per file, ${MAX_BATCH} files at a time. ` + $("uphint").textContent;
   renderPath(null);
-}
-
-function start(input) {
-  if (S.input && S.input.image && S.input.image !== input.image) URL.revokeObjectURL(S.input.image);
-  S.input = input; S.decisions = [];
-  if (input.sample) $("uperr").innerHTML = "";
-  document.querySelectorAll("#samples button").forEach((b) =>
-    b.setAttribute("aria-pressed", String(b.dataset.file === input.sample)));
-  submit();
-}
-
-function form() {
-  const fd = new FormData();
-  if (S.input.file) fd.append("file", S.input.file); else fd.append("sample", S.input.sample);
-  if (S.input.source) fd.append("source", S.input.source);
-  return fd;
-}
-
-async function submit() {
-  setBusy(true);
-  try {
-    let run;
-    if (S.config.demo_mode) {
-      const fd = form(); fd.append("decisions", JSON.stringify(S.decisions)); fd.append("vendors", vendorPayload());
-      run = await api("/api/demo/run", { method: "POST", body: fd });
-    } else {
-      run = await api("/invoices", { method: "POST", body: form() });
-    }
-    render(run);
-  } catch (err) { showError(err); }
-  setBusy(false);
-}
-
-async function review(decision) {
-  setBusy(true);
-  try {
-    let run;
-    if (S.config.demo_mode) {
-      // Serverless keeps nothing between requests, so the page sends the file
-      // again with every decision so far and the server replays them.
-      const fd = form(); fd.append("decisions", JSON.stringify([...S.decisions, decision])); fd.append("vendors", vendorPayload());
-      run = await api("/api/demo/run", { method: "POST", body: fd });
-      S.decisions.push(decision);
-    } else {
-      run = await api(`/invoices/${encodeURIComponent(S.run.id)}/review`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(decision) });
-    }
-    render(run);
-  } catch (err) { showError(err, true); }
-  setBusy(false);
-}
-
-function setBusy(b) {
-  S.busy = b;
-  document.querySelectorAll("button").forEach((x) => (x.disabled = b));
-}
-
-function showError(err, keep) {
-  const box = keep && $("reviewerr");
-  if (box) { box.textContent = err.message; return; }
-  $("out").innerHTML = `<section class="card"><div class="err">${esc(err.message)}</div></section>`;
 }
 
 function renderPath(run) {
@@ -444,8 +579,8 @@ function renderPath(run) {
   $("seq").textContent = run ? "START → " + path.join(" → ") + (waiting ? " → (interrupt)" : " → END") : "";
 }
 
-function render(run) {
-  S.run = run;
+function render(run, scroll) {
+  const it = current();
   renderPath(run);
   const [cls, title, sub] = STATUS[run.status] || ["", run.status, ""];
   const req = run.review_request;
@@ -504,15 +639,15 @@ function render(run) {
     if (draft) html += `<p class="hint">What the extractor did read:</p><pre>${esc(JSON.stringify(draft, null, 2))}</pre>`;
   }
   if (run.attempts > 1) html += `<p class="hint">Extraction took ${run.attempts} attempts; the schema error from the first was fed back to the second.</p>`;
-  if (run.source === "ocr" && S.input && S.input.image) {
-    html += `<details open><summary>The photo (${esc(S.input.photo)}): check the fields against it</summary><img class="photo" alt="The uploaded photo" src="${esc(S.input.image)}"></details>`;
+  if (run.source === "ocr" && it && it.input.image) {
+    html += `<details open><summary>The photo (${esc(it.input.photo)}): check the fields against it</summary><img class="photo" alt="The uploaded photo" src="${esc(it.input.image)}"></details>`;
   }
   if (run.text) html += `<details><summary>Text the ${run.source === "ocr" ? "OCR" : "extractor"} read</summary><pre>${esc(run.text)}</pre></details>`;
   if (run.audit && run.audit.length) html += `<details><summary>Audit log</summary><pre>${esc(run.audit.map((a) => `${a.at}  ${a.event}  ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => !["at","event"].includes(k))))}`).join("\n"))}</pre></details>`;
   html += `</section>`;
   $("out").innerHTML = html;
   // On a phone the result sits below the sample list and the graph; bring it into view.
-  if (window.matchMedia("(max-width: 860px)").matches) $("out").scrollIntoView({ behavior: "smooth", block: "start" });
+  if (scroll === true && window.matchMedia("(max-width: 860px)").matches) $("out").scrollIntoView({ behavior: "smooth", block: "start" });
 
   if (req) {
     $("out").querySelectorAll("button[data-act]").forEach((b) => b.addEventListener("click", () => act(b.dataset.act)));
@@ -528,6 +663,7 @@ function blankInvoice() {
 }
 
 async function addVendor(base) {
+  const it = current();
   const body = { name: $("v-name").value, tax_id: $("v-tax").value || null, currency: $("v-cur").value, reviewer: base.reviewer };
   setBusy(true);
   try {
@@ -539,18 +675,22 @@ async function addVendor(base) {
     await refreshVendors();
   } catch (err) { setBusy(false); $("reviewerr").textContent = err.message; return; }
   setBusy(false);
-  if (S.config.demo_mode) { S.decisions = []; return submit(); }  // a fresh run now finds the vendor
+  if (S.config.demo_mode) {  // a fresh run of the same file now finds the vendor
+    it.decisions = []; it.state = "queued"; it.run = null; renderQueue(); showCurrent();
+    return drain();
+  }
   return review({ ...base, action: "recheck", note: base.note || "vendor added" });
 }
 
 function act(kind) {
+  const it = current();
   const base = { reviewer: $("reviewer").value || "reviewer", note: $("note").value };
   if (kind === "vendor") {
     const ed = $("vendoredit"); ed.hidden = !ed.hidden;
     if (!ed.hidden && !$("v-name").value) {
-      $("v-name").value = S.run.invoice.vendor_name || "";
-      $("v-tax").value = S.run.invoice.vendor_tax_id || "";
-      $("v-cur").value = S.run.invoice.currency || "";
+      $("v-name").value = it.run.invoice.vendor_name || "";
+      $("v-tax").value = it.run.invoice.vendor_tax_id || "";
+      $("v-cur").value = it.run.invoice.currency || "";
     }
     return;
   }
@@ -558,9 +698,9 @@ function act(kind) {
   if (kind === "correct") {
     const ed = $("editor"); ed.hidden = !ed.hidden;
     if (ed.hidden || $("fix").value) return;  // closing, or reopening: keep what was typed
-    const draft = Object.fromEntries(Object.entries((S.run.review_request || {}).draft || {})
+    const draft = Object.fromEntries(Object.entries((it.run.review_request || {}).draft || {})
       .filter(([k, v]) => v !== null && !(Array.isArray(v) && !v.length)));
-    $("fix").value = JSON.stringify(S.run.invoice || { ...blankInvoice(), ...draft }, null, 2);
+    $("fix").value = JSON.stringify(it.run.invoice || { ...blankInvoice(), ...draft }, null, 2);
     return;
   }
   if (kind === "submit-fix") {
@@ -576,7 +716,7 @@ init().catch((e) => {
   m.className = "mode";
   m.innerHTML = `<b>The demo server did not answer.</b> ${esc(e.message)} <button type="button" id="retry-init">Try again</button>`;
   $("retry-init").addEventListener("click", () => location.reload());
-  showError(e);
+  $("out").innerHTML = `<section class="card"><div class="err">${esc(e.message)}</div></section>`;
 });
 </script>
 </body>

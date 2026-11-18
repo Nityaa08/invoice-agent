@@ -158,6 +158,16 @@ class InvoiceService:
         self._invoke(run_id, Command(resume=clean))
         return self.view(run_id)
 
+    def list_runs(self, limit: int = 500) -> list[dict[str, Any]]:
+        """The most recent runs, newest first, each as a full view."""
+        out = []
+        for r in self.store.list_runs(limit):
+            try:
+                out.append(self.view(r["run_id"]))
+            except RunNotFound:  # registered, but the graph never started (a crash before the first step)
+                continue
+        return out
+
     def list_vendors(self) -> list[dict[str, Any]]:
         return self.deps.matcher.all()
 

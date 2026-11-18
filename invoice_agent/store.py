@@ -102,6 +102,10 @@ class InvoiceStore:
             ).fetchone()
         return row["run_id"]
 
+    def list_runs(self, limit: int = 500) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT * FROM runs ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(r) for r in rows]
+
     def get_run(self, run_id: str) -> dict[str, Any] | None:
         row = self._conn.execute("SELECT * FROM runs WHERE run_id = ?", (run_id,)).fetchone()
         return dict(row) if row else None

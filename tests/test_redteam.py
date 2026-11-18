@@ -382,8 +382,9 @@ def test_rt_page_escapes_what_it_renders():
     """Filenames, vendor names, rule details and errors are attacker-controlled; the page escapes them.
     (The 2026-11-17 browser run also uploaded files with HTML in the name and in the fields: nothing ran.)"""
     script = re.search(r"<script>(.*?)</script>", (ROOT / "invoice_agent" / "web" / "index.html").read_text(), re.S).group(1)
-    for value in ("esc(run.filename)", "esc(r.detail)", "esc(r)", "esc(vm.vendor_name", "esc(err.message)",
-                  "esc(JSON.stringify(run.invoice", "esc(run.text)", "esc(problem)"):
+    for value in ("esc(run.filename)", "esc(r.detail)", "esc(r)", "esc(vm.vendor_name", "esc(e.message)",
+                  "esc(JSON.stringify(run.invoice", "esc(run.text)", "problems.map(esc)", "esc(it.error)",
+                  "esc(it.input.label", "esc(what)", "esc(v.name)", "esc(it.input.photo)"):
         assert value in script, value
 
 
