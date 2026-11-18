@@ -542,7 +542,7 @@ async function init() {
   const m = $("mode");
   if (S.config.extractor === "llm") {
     m.className = "mode live";
-    m.innerHTML = `<b>Live model:</b> ${esc(S.config.llm_model)} extracts the fields; the rules are the same.`;
+    m.innerHTML = `<b>Live model:</b> ${esc(S.config.llm_model)}${S.config.llm_provider ? " on " + esc(S.config.llm_provider) : ""} reads each invoice into the schema (structured output, injection-fenced prompt, one retry with the schema error fed back). The rules that decide are the same tested code.`;
   } else {
     m.innerHTML = `<b>Demo extractor:</b> layout rules and regex stand in for the LLM (no API key, no cost). It reads common text-layer invoices (GST tax invoices, US and EU layouts) and sends anything it cannot read fully to a human instead of guessing. Everything after extraction is the real graph.` +
       (S.config.as_of ? ` Sample dates are checked as of ${esc(S.config.as_of)}${S.config.as_of_uploads === "today" ? "; uploads as of today" : ""}.` : "") +

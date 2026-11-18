@@ -21,9 +21,13 @@ rules.
 
 from __future__ import annotations
 
+import copy
+import hashlib
 import json
 import re
+import threading
 import unicodedata
+from collections import OrderedDict
 from datetime import date
 from itertools import combinations
 from typing import Any, Protocol
@@ -573,6 +577,22 @@ printed values and nothing else. You cannot approve, reject or pay anything;
 separate code checks every value you return."""
 
 MAX_LLM_TEXT_CHARS = 30_000  # a long invoice is a few thousand characters; this caps cost per call
+_CACHE: "OrderedDict[tuple, dict[str, Any]]" = OrderedDict()
+_CACHE_LOCK = threading.Lock()
+_CACHE_SIZE = 128
+
+
+def _model_error(exc: Exception) -> str:
+    """A message for the reviewer that names the kind of failure, never the provider's text."""
+    kind = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if status == 429 or "RateLimit" in kind:
+        return "model call failed: the provider's rate limit was reached; try again in a minute"
+    if status in (401, 403) or "Authentication" in kind or "PermissionDenied" in kind:
+        return "model call failed: the API key was refused by the provider"
+    if "Timeout" in kind:
+        return "model call failed: the provider did not answer in time"
+    return f"model call failed: {kind}" + (f" (HTTP {status})" if status else "")
 
 
 class LLMExtractor:
@@ -585,18 +605,37 @@ class LLMExtractor:
     """
 
     def __init__(self, model: str, api_key: str, base_url: str | None = None,
-                 method: str = "json_schema", timeout: float = 30.0, chat_model: Any = None):
+                 method: str = "json_schema", timeout: float = 30.0, chat_model: Any = None,
+                 max_retries: int = 2, cache: bool = False):
         self.name = f"llm:{model}"
+        self._cache_key = f"{model}|{base_url}|{method}" if cache else None
         if chat_model is None:
             from langchain_openai import ChatOpenAI
 
             chat_model = ChatOpenAI(
                 model=model, api_key=api_key, base_url=base_url,
-                temperature=0, timeout=timeout, max_retries=2,
+                temperature=0, timeout=timeout, max_retries=max_retries,
             )
         self._structured = chat_model.with_structured_output(Invoice, method=method, include_raw=True)
 
     def extract(self, text: str, feedback: str | None = None) -> dict[str, Any]:
+        """Cached per process for identical text: the demo replays a run for every review
+        decision, and the same file should not cost a second model call (or read differently)."""
+        if self._cache_key is None:
+            return self._extract(text, feedback)
+        key = (self._cache_key, hashlib.sha256(text.encode()).hexdigest(), feedback)
+        with _CACHE_LOCK:
+            if key in _CACHE:
+                _CACHE.move_to_end(key)
+                return copy.deepcopy(_CACHE[key])
+        out = self._extract(text, feedback)
+        with _CACHE_LOCK:
+            _CACHE[key] = copy.deepcopy(out)
+            while len(_CACHE) > _CACHE_SIZE:
+                _CACHE.popitem(last=False)
+        return out
+
+    def _extract(self, text: str, feedback: str | None = None) -> dict[str, Any]:
         # Strip anything that could close the delimiter early, then fence the text.
         body = re.sub(r"</?\s*invoice\s*>", " ", text[:MAX_LLM_TEXT_CHARS], flags=re.I)
         messages = [("system", SYSTEM_PROMPT), ("human", f"<invoice>\n{body}\n</invoice>")]
@@ -613,7 +652,8 @@ class LLMExtractor:
             # the OpenAI client). The graph reports it and retries.
             raise
         except Exception as exc:  # network, auth, rate limit: not a schema problem
-            raise ExtractionError(f"model call failed: {type(exc).__name__}: {exc}") from exc
+            # The provider's message is not shown: an auth error can quote part of the key.
+            raise ExtractionError(_model_error(exc)) from exc
         if result.get("parsed") is not None:
             return result["parsed"].model_dump(mode="json")
         # Hand back whatever the model produced so the schema error is precise.
@@ -626,11 +666,12 @@ class LLMExtractor:
 
 
 def build_extractor(provider: str, *, model: str = "", api_key: str = "", base_url: str = "",
-                    method: str = "json_schema") -> Extractor:
+                    method: str = "json_schema", timeout: float = 30.0, max_retries: int = 2) -> Extractor:
     if provider == "demo":
         return DemoExtractor()
     if provider == "llm":
         if not api_key:
-            raise ValueError("EXTRACTOR=llm needs LLM_API_KEY")
-        return LLMExtractor(model=model, api_key=api_key, base_url=base_url or None, method=method)
+            raise ValueError("EXTRACTOR=llm needs LLM_API_KEY (or GROQ_API_KEY)")
+        return LLMExtractor(model=model, api_key=api_key, base_url=base_url or None, method=method,
+                            timeout=timeout, max_retries=max_retries, cache=True)
     raise ValueError(f"unknown extractor {provider!r}; use 'demo' or 'llm'")

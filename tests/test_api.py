@@ -21,6 +21,8 @@ def make_client(monkeypatch, tmp_path, demo: bool) -> TestClient:
     monkeypatch.setenv("DB_PATH", str(tmp_path / "invoices.db"))
     monkeypatch.setenv("CHECKPOINT_PATH", str(tmp_path / "checkpoints.db"))
     monkeypatch.delenv("EXTRACTOR", raising=False)
+    for key in ("LLM_API_KEY", "GROQ_API_KEY"):  # a key in the developer's shell must not switch tests to a live model
+        monkeypatch.delenv(key, raising=False)
     app = FastAPI()
     register_routes(app, load_settings())
     return TestClient(app)
@@ -42,7 +44,7 @@ def test_page_config_and_samples(full):
     cfg = full.get("/api/config").json()
     assert cfg.pop("rules")[:2] == ["line_items_sum_to_subtotal", "subtotal_plus_tax_equals_total"]
     assert cfg == {
-        "demo_mode": False, "extractor": "demo", "llm_model": None, "as_of": "2026-11-13",
+        "demo_mode": False, "extractor": "demo", "llm_model": None, "llm_provider": None, "as_of": "2026-11-13",
         "as_of_uploads": "2026-11-13", "max_upload_mb": 4, "tracing": "off",
     }
     samples = full.get("/api/samples").json()

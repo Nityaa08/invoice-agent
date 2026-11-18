@@ -95,12 +95,13 @@ class InvoiceService:
         if provider == "llm" and not settings.llm_api_key:
             # A missing key on a deployment should not turn every upload into a 500;
             # /api/config already reports the demo extractor in this case.
-            log.warning("EXTRACTOR=llm but LLM_API_KEY is empty; using the demo extractor")
+            log.warning("EXTRACTOR=llm but no LLM_API_KEY or GROQ_API_KEY; using the demo extractor")
             provider = "demo"
         return Deps(
             extractor=extractor or build_extractor(
                 provider, model=settings.llm_model, api_key=settings.llm_api_key,
                 base_url=settings.llm_base_url, method=settings.llm_method,
+                timeout=settings.llm_timeout, max_retries=settings.llm_max_retries,
             ),
             matcher=matcher or default_matcher(),
             store=store,

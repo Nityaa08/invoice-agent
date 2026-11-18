@@ -10,8 +10,13 @@ Demo mode (default, free, offline):
     python evals/run_eval.py
 
 With a real model (any OpenAI-compatible API; Groq has a free tier):
+    GROQ_API_KEY=... python evals/run_eval.py
     EXTRACTOR=llm LLM_API_KEY=... LLM_MODEL=openai/gpt-oss-20b python evals/run_eval.py
     # other providers: also set LLM_BASE_URL, e.g. https://api.openai.com/v1
+
+Demo extractor vs the model, side by side, on every set (needs a key; without
+one it says so and exits 0):
+    GROQ_API_KEY=... python evals/run_eval.py --compare
 
 Two sets:
     --set samples    the eleven synthetic samples in samples/ (default)
@@ -67,7 +72,8 @@ SETS = {
 }
 
 
-def evaluate(which: str = "samples") -> dict:
+def evaluate(which: str = "samples", extractor: str | None = None) -> dict:
+    """extractor: "demo" or "llm" to override the EXTRACTOR setting."""
     folder, labels_path, key = SETS[which]
     labels = json.loads(labels_path.read_text(encoding="utf-8"))
     # The invoices are dated Oct/Nov 2026; check them as of a fixed day so they do not go stale.
@@ -75,6 +81,8 @@ def evaluate(which: str = "samples") -> dict:
     # so evaluating one set does not change the date used for the next.
     as_of = os.environ.get("AS_OF_DATE") or labels.get("as_of", DEMO_AS_OF)
     settings = replace(load_settings(), as_of=date.fromisoformat(as_of), as_of_from_env=True)
+    if extractor:
+        settings = replace(settings, extractor=extractor)
     manifest = labels[key]
     rows, field_hits, field_total = [], {f: 0 for f in FIELDS}, 0
 
@@ -154,12 +162,35 @@ def markdown(report: dict) -> str:
     return "\n".join(lines)
 
 
+def compare(sets: list[str], run=evaluate) -> str:
+    """The demo extractor and the configured model on the same sets, as one Markdown table."""
+    lines = ["| Set | Extractor | Field accuracy | Decision accuracy | Exact failed rules | Sent to review | Mean time |",
+             "|---|---|---|---|---|---|---|"]
+    for which in sets:
+        for kind in ("demo", "llm"):
+            r = run(which, extractor=kind)
+            fa = f"{r['field_accuracy']:.1%}" if r["field_accuracy"] is not None else "n/a"
+            lines.append(f"| {which} | `{r['extractor']}` | {fa} | {r['decision_accuracy']:.1%} | "
+                         f"{r['failed_rules_exact_match']:.1%} | {r['sent_to_review']} of {r['invoices']} | "
+                         f"{r['mean_seconds_per_invoice'] * 1000:.0f} ms |")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    parser.add_argument("--set", choices=sorted(SETS), default="samples", help="which labelled set to run")
+    parser.add_argument("--set", choices=sorted(SETS) + ["all"], default="samples", help="which labelled set to run")
     parser.add_argument("--markdown", action="store_true", help="print a Markdown table")
     parser.add_argument("--out", help="write the full JSON report here")
+    parser.add_argument("--compare", action="store_true", help="demo extractor vs the model (needs a key)")
     args = parser.parse_args()
+    if args.compare:
+        if not load_settings().llm_api_key:
+            print("No model key: set GROQ_API_KEY (free at console.groq.com) or LLM_API_KEY to compare. Skipped.")
+            return 0
+        print(compare(sorted(SETS) if args.set == "all" else [args.set]))
+        return 0
+    if args.set == "all":
+        parser.error("--set all works with --compare")
     report = evaluate(args.set)
     if args.out:
         Path(args.out).write_text(json.dumps(report, indent=2), encoding="utf-8")

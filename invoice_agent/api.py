@@ -289,6 +289,7 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
             "demo_mode": settings.demo_mode,
             "extractor": "llm" if settings.llm_configured else "demo",
             "llm_model": settings.llm_model if settings.llm_configured else None,
+            "llm_provider": settings.llm_provider if settings.llm_configured else None,
             "as_of": settings.as_of.isoformat() if settings.as_of else None,
             # In the demo the fixed date applies to the samples only; uploads use today.
             "as_of_uploads": (settings.as_of.isoformat() if settings.as_of_from_env and settings.as_of
