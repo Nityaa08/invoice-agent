@@ -81,17 +81,31 @@ DOCS_CSP = ("default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.j
             "https://cdn.redoc.ly; worker-src blob:; frame-ancestors 'none'; base-uri 'none'")
 
 
+# Browser OCR: Tesseract.js, loaded by the page only when someone picks a photo.
+# Pinned versions, and the CSP allows exactly these package folders on jsDelivr:
+# the library (main script, checked with SRI by the page, and its web worker),
+# the WebAssembly core, and the English language data. 'wasm-unsafe-eval' lets
+# the page compile WebAssembly; it does not allow eval() of JavaScript.
+OCR_SCRIPT_SOURCES = (
+    "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/",
+    "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/",
+)
+OCR_DATA_SOURCE = "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/"
+
+
 @lru_cache(maxsize=1)
 def page_csp() -> str:
-    """The demo page's CSP: its one inline script is allowed by hash, nothing else may run."""
+    """The demo page's CSP: its one inline script is allowed by hash, plus the pinned OCR library."""
     html = (WEB_DIR / "index.html").read_text(encoding="utf-8")
     hashes = " ".join(
         "'sha256-" + base64.b64encode(hashlib.sha256(m.encode()).digest()).decode() + "'"
         for m in re.findall(r"<script>(.*?)</script>", html, re.S))
+    ocr = " ".join(OCR_SCRIPT_SOURCES)
     return ("default-src 'none'; "
-            f"script-src {hashes}; "
+            f"script-src {hashes} {ocr} 'wasm-unsafe-eval'; worker-src blob:; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-            "font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self'; "
+            "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; "
+            f"connect-src 'self' {ocr} {OCR_DATA_SOURCE}; "
             "frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 
 
@@ -133,6 +147,15 @@ def _sample_path(name: str) -> Path:
     if name not in allowed:  # also blocks path tricks such as ../
         raise HTTPException(404, f"no sample called {name!r}")
     return SAMPLES_DIR / name
+
+
+def _source(value: str | None) -> str | None:
+    """'ocr' marks text the page read from a photo with Tesseract.js. Anything else is refused."""
+    if value in (None, "", "upload"):
+        return None
+    if value == "ocr":
+        return "ocr"
+    raise HTTPException(422, "source must be 'ocr' or left out")
 
 
 async def _read_input(file: UploadFile | None, sample: str | None) -> tuple[str, bytes]:
@@ -324,9 +347,11 @@ def _register_full(app: FastAPI, settings: Settings):
     app.state.service = service
 
     @app.post("/invoices", status_code=201)
-    async def submit(file: UploadFile | None = File(None), sample: str | None = Form(None)):
+    async def submit(file: UploadFile | None = File(None), sample: str | None = Form(None),
+                     source: str | None = Form(None)):
+        origin = _source(source)
         filename, data = await _read_input(file, sample)
-        run, created = service.submit(filename, data)
+        run, created = service.submit(filename, data, source=origin)
         # Same file again: 200 with the original run instead of a second one.
         return run if created else JSONResponse(run, status_code=200)
 
@@ -393,15 +418,16 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
     @app.post("/api/demo/run")
     async def demo_run(request: Request, file: UploadFile | None = File(None),
                        sample: str | None = Form(None), decisions: str = Form("[]"),
-                       vendors: str = Form("[]")):
+                       vendors: str = Form("[]"), source: str | None = Form(None)):
         if not limiter.allow(client_ip(request)):
             raise HTTPException(429, "demo limit reached; try again in an hour",
                                 headers={"Retry-After": "3600"})
         steps = _parse_decisions(decisions)
+        origin = _source(source)
         filename, data = await _read_input(file, sample)
         added = _parse_vendors(vendors)
         uploaded = not (sample and (file is None or not file.filename))
-        log.info("demo run: %s, %d bytes, %s", "upload" if uploaded else "sample", len(data),
+        log.info("demo run: %s, %d bytes, %s", ("ocr text" if origin else "upload") if uploaded else "sample", len(data),
                  filename.rsplit(".", 1)[-1].lower() if "." in filename else "no extension")
 
         # A fresh in-memory service per request: nothing is shared between visitors.
@@ -410,7 +436,7 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
         from .service import InvoiceService  # first POST pays for LangGraph; GETs never do
 
         service = InvoiceService.ephemeral(run_settings, vendors=added)
-        run, _ = service.submit(filename, data)
+        run, _ = service.submit(filename, data, source=origin)
         if run.get("ingest_error") or run.get("extraction_error"):
             log.info("demo run %s needs review: %s", run["id"], run.get("ingest_error") or run.get("extraction_error"))
         for step in steps:

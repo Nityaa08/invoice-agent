@@ -123,8 +123,11 @@ class InvoiceService:
     def _config(run_id: str) -> dict:
         return {"configurable": {"thread_id": run_id}}
 
-    def submit(self, filename: str, data: bytes) -> tuple[dict[str, Any], bool]:
-        """Process a file. Returns (run view, created). The same bytes twice -> the first run."""
+    def submit(self, filename: str, data: bytes, source: str | None = None) -> tuple[dict[str, Any], bool]:
+        """Process a file. Returns (run view, created). The same bytes twice -> the first run.
+
+        source="ocr": the bytes are text a browser read from a photo; the run always goes to review.
+        """
         run_id = uuid.uuid4().hex[:16]
         existing = self.store.register_run(run_id, idempotency_key(data), filename)
         if existing != run_id:
@@ -137,7 +140,7 @@ class InvoiceService:
             return self.view(existing, duplicate_submission=True), False
         self.store.audit(run_id, "submitted", filename=filename, bytes=len(data))
         self._invoke(run_id, {"run_id": run_id, "filename": filename, "file_bytes": data,
-                              "attempts": 0, "path": []})
+                              "source": "ocr" if source == "ocr" else None, "attempts": 0, "path": []})
         return self.view(run_id), True
 
     def get(self, run_id: str) -> dict[str, Any]:
@@ -194,6 +197,7 @@ class InvoiceService:
         return {
             "id": run_id,
             "filename": v.get("filename"),
+            "source": v.get("source"),
             "created_at": run.get("created_at"),
             "status": status,
             "duplicate_submission": duplicate_submission,

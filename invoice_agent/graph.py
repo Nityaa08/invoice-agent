@@ -37,6 +37,9 @@ from .schema import Invoice
 from .store import InvoiceStore
 from .vendors import VendorMatcher
 
+OCR_CHECK = "ocr_checked_by_person"
+OCR_NOTE = ("read by OCR, please check every field against the original image: OCR misreads digits "
+            "(1 and 7, 0 and 8, 5 and S) and drops decimal points")
 MAX_EXTRACT_ATTEMPTS = 2  # the first try plus one retry with the error fed back
 # recheck: run the vendor match and every rule again on the same fields, for
 # when something outside the invoice changed (the reviewer added the vendor).
@@ -48,6 +51,7 @@ class InvoiceState(TypedDict, total=False):
     run_id: str
     filename: str
     file_bytes: bytes | None  # dropped after ingest so checkpoints stay small
+    source: str | None  # "ocr": the text came from OCR (the browser's or the server's), so a person checks it
     text: str
     ingest_error: str | None
     ingest_notes: list[str]  # what ingest had to leave out (an over-long document); forces a review
@@ -134,13 +138,17 @@ def build_graph(deps: Deps):
     """Return the uncompiled StateGraph; compile it with a checkpointer."""
 
     def ingest(state: InvoiceState) -> dict:
+        data = state.get("file_bytes") or b""
         try:
-            text = ingest_mod.to_text(state["filename"], state.get("file_bytes") or b"")
+            text = ingest_mod.to_text(state["filename"], data)
             notes = []
             if len(text) > ingest_mod.MAX_TEXT_CHARS:
                 text, notes = ingest_mod.shorten(text), [ingest_mod.LONG_TEXT_NOTE]
-            return {"text": text, "ingest_error": None, "ingest_notes": notes, "file_bytes": None,
-                    "path": ["ingest"]}
+            out = {"text": text, "ingest_error": None, "ingest_notes": notes, "file_bytes": None,
+                   "path": ["ingest"]}
+            if ingest_mod.sniff_kind(state["filename"], data) == "image":
+                out["source"] = "ocr"  # server-side OCR (SERVER_OCR=true): same rule as the browser's
+            return out
         except ingest_mod.IngestError as exc:
             return {"text": "", "ingest_error": str(exc), "file_bytes": None, "path": ["ingest"]}
 
@@ -196,6 +204,10 @@ def build_graph(deps: Deps):
         notes = [] if corrected else list(state.get("ingest_notes") or []) + list(state.get("extraction_notes") or [])
         if notes:
             results.append({"name": "extraction_is_complete", "passed": False, "detail": "; ".join(notes)})
+        # OCR text always goes to a person; a re-check does not clear it, a correction does.
+        if state.get("source") == "ocr":
+            results.append({"name": OCR_CHECK, "passed": corrected,
+                            "detail": "a reviewer checked the fields against the image" if corrected else OCR_NOTE})
         return {"rules": results, "path": ["validate"]}
 
     def auto_approve(state: InvoiceState) -> dict:

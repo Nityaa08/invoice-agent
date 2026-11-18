@@ -156,7 +156,7 @@
     },
     {
       "file": "qa_photo.png",
-      "title": "PNG photo of an invoice (no OCR in the demo)",
+      "title": "PNG photo of an invoice (no OCR on the server; the page OCRs it in the browser)",
       "decision": "review",
       "failed_rules": [],
       "extraction_fails": true,
@@ -176,7 +176,7 @@
     },
     {
       "file": "qa_photo.jpg",
-      "title": "JPEG photo of an invoice (no OCR in the demo)",
+      "title": "JPEG photo of an invoice (no OCR on the server; the page OCRs it in the browser)",
       "decision": "review",
       "failed_rules": [],
       "extraction_fails": true,

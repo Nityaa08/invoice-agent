@@ -100,6 +100,7 @@ details pre{margin-top:8px;max-height:300px}
 .notice b{display:block;margin-bottom:2px}
 .notice.warn{background:var(--warn-bg);color:var(--warn)}
 .uperr{margin-top:10px}
+img.photo{display:block;max-width:100%;max-height:520px;margin-top:8px;border:1px solid var(--line);border-radius:10px}
 .vform{display:grid;gap:8px;grid-template-columns:minmax(0,2fr) minmax(0,1.4fr) minmax(0,.8fr);margin-top:4px}
 .vform label{font-size:12px;color:var(--ink-3);display:grid;gap:3px}
 @media (max-width:560px){.vform{grid-template-columns:minmax(0,1fr)}}
@@ -137,11 +138,11 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
         <h2>1 · Invoice</h2>
         <ul class="samples" id="samples"></ul>
         <label class="drop" id="drop">
-          <input type="file" id="file" accept=".pdf,.txt,.png,.jpg,.jpeg,application/pdf,text/plain,image/*">
-          Drop a PDF or text invoice here, or click to choose
+          <input type="file" id="file" accept=".pdf,.txt,.png,.jpg,.jpeg,.webp,application/pdf,text/plain,image/png,image/jpeg,image/webp">
+          Drop a PDF, a text invoice or a photo here, or click to choose
         </label>
         <div class="uperr" id="uperr" role="alert" aria-live="polite"></div>
-        <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word). Scanned PDFs and photos need OCR, which this demo does not run. Do not upload invoices with personal data to the public demo.</p>
+        <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word), or a photo: photos are read by OCR in your browser (Tesseract.js) and only the text is sent; OCR results always go to a person. Do not upload invoices with personal data to the public demo.</p>
       </section>
       <section class="card" id="vendorcard" hidden>
         <h2>Vendors you added</h2>
@@ -169,7 +170,7 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
 
 <script>
 const NODES = [
-  ["ingest", "file to text (pypdf; OCR optional)"],
+  ["ingest", "file to text (pypdf; photos: OCR in the browser)"],
   ["extract", "LLM → Pydantic Invoice, retried once"],
   ["match_vendor", "closest vendor in the vector store"],
   ["validate", "pure-Python rules decide"],
@@ -246,22 +247,80 @@ async function refreshVendors() {
     : "Saved in the service's SQLite database.";
 }
 
-const ACCEPTED = /\.(pdf|txt|png|jpe?g)$/i;
+const ACCEPTED = /\.(pdf|txt|png|jpe?g|webp)$/i;
+const IMAGE = /^image\/(png|jpeg|webp)$/;
+const MAX_IMAGE_MB = 15;  // photos never leave the browser; only the recognised text is sent
 function maxBytes() { return ((S.config && S.config.max_upload_mb) || 4) * 1024 * 1024; }
+function isImage(f) { return IMAGE.test(f.type) || /\.(png|jpe?g|webp)$/i.test(f.name); }
 
 function checkFile(f) {
   const mb = (f.size / 1024 / 1024).toFixed(1);
   const limit = (S.config && S.config.max_upload_mb) || 4;
   if (!f.size) return "This file is empty.";
-  if (f.size > maxBytes()) return `This file is ${mb} MB; the demo accepts files up to ${limit} MB (Vercel caps uploads at 4.5 MB). Invoices exported as PDF are usually under 1 MB; a large file is often a scan, which the demo cannot read anyway.`;
-  if (!ACCEPTED.test(f.name) && !/^(application\/pdf|text\/plain|image\/(png|jpeg))$/.test(f.type)) return `"${f.name}" is not a PDF. Upload a PDF (or a .txt, .png or .jpg).`;
+  if (isImage(f)) return f.size > MAX_IMAGE_MB * 1024 * 1024 ? `This photo is ${mb} MB; the page reads photos up to ${MAX_IMAGE_MB} MB.` : null;
+  if (f.size > maxBytes()) return `This file is ${mb} MB; the demo accepts files up to ${limit} MB (Vercel caps uploads at 4.5 MB). Invoices exported as PDF are usually under 1 MB.`;
+  if (!ACCEPTED.test(f.name) && !/^(application\/pdf|text\/plain)$/.test(f.type)) return `"${f.name}" is not a PDF. Upload a PDF, a text file or a photo (.png, .jpg, .webp).`;
   return null;
+}
+
+// --- OCR in the browser ------------------------------------------------------------
+// Tesseract.js is loaded only when someone picks a photo: pinned versions, the main
+// script checked with Subresource Integrity, and the page's CSP allows exactly these
+// folders. The photo stays in the browser; the server gets the text, flagged as OCR,
+// and always sends it to a person.
+const OCR = {
+  script: "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/tesseract.min.js",
+  integrity: "sha384-2BQ3U3OdKOb0Uczxqr41I9UvZkzr4V9Hv8uSzMMZAlmhsFClvdZX5wi5fDCzG+tM",
+  workerPath: "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/dist/worker.min.js",
+  corePath: "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0",
+  langPath: "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/4.0.0_best_int",
+};
+let tesseractLoading = null;
+function loadTesseract() {
+  if (window.Tesseract) return Promise.resolve(window.Tesseract);
+  if (!tesseractLoading) tesseractLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = OCR.script; s.integrity = OCR.integrity; s.crossOrigin = "anonymous"; s.referrerPolicy = "no-referrer";
+    s.onload = () => (window.Tesseract ? resolve(window.Tesseract) : reject(new Error("the OCR library did not start")));
+    s.onerror = () => { tesseractLoading = null; reject(new Error("the OCR library could not be downloaded (offline, or blocked by the network)")); };
+    document.head.appendChild(s);
+  });
+  return tesseractLoading;
+}
+
+async function ocrImage(file, progress) {
+  progress("Loading the OCR library (about 6 MB, once)…");
+  const T = await loadTesseract();
+  const worker = await T.createWorker("eng", 1, {
+    workerPath: OCR.workerPath, corePath: OCR.corePath, langPath: OCR.langPath,
+    logger: (m) => { if (m.status === "recognizing text") progress(`Reading the photo in your browser… ${Math.round(m.progress * 100)}%`); },
+  });
+  try { return (await worker.recognize(file)).data.text || ""; }
+  finally { worker.terminate(); }
+}
+
+async function pickImage(f) {
+  const box = $("uperr");
+  const progress = (msg) => { box.innerHTML = `<div class="notice warn"><b>OCR</b>${esc(msg)}</div>`; };
+  setBusy(true);
+  try {
+    const text = await ocrImage(f, progress);
+    if (text.replace(/\W/g, "").length < 20) throw new Error("no readable text was found in this photo; try a sharper, straight-on photo");
+    box.innerHTML = "";
+    const name = f.name.replace(/\.[^.]+$/, "") + ".ocr.txt";
+    setBusy(false);
+    return start({ file: new File([text], name, { type: "text/plain" }), source: "ocr", image: URL.createObjectURL(f), photo: f.name });
+  } catch (err) {
+    box.innerHTML = `<div class="notice"><b>OCR did not work</b>${esc(cap(err.message))}. You can still upload a PDF, or type the fields in after a run.</div>`;
+  }
+  setBusy(false);
 }
 
 function pickFile(f) {
   $("uperr").innerHTML = "";
   const problem = checkFile(f);
   if (problem) { $("uperr").innerHTML = `<div class="notice"><b>Not uploaded</b>${esc(problem)}</div>`; return; }
+  if (isImage(f)) return pickImage(f);
   start({ file: f });
 }
 
@@ -313,6 +372,7 @@ async function init() {
 }
 
 function start(input) {
+  if (S.input && S.input.image && S.input.image !== input.image) URL.revokeObjectURL(S.input.image);
   S.input = input; S.decisions = [];
   if (input.sample) $("uperr").innerHTML = "";
   document.querySelectorAll("#samples button").forEach((b) =>
@@ -323,6 +383,7 @@ function start(input) {
 function form() {
   const fd = new FormData();
   if (S.input.file) fd.append("file", S.input.file); else fd.append("sample", S.input.sample);
+  if (S.input.source) fd.append("source", S.input.source);
   return fd;
 }
 
@@ -443,7 +504,10 @@ function render(run) {
     if (draft) html += `<p class="hint">What the extractor did read:</p><pre>${esc(JSON.stringify(draft, null, 2))}</pre>`;
   }
   if (run.attempts > 1) html += `<p class="hint">Extraction took ${run.attempts} attempts; the schema error from the first was fed back to the second.</p>`;
-  if (run.text) html += `<details><summary>Text the extractor read</summary><pre>${esc(run.text)}</pre></details>`;
+  if (run.source === "ocr" && S.input && S.input.image) {
+    html += `<details open><summary>The photo (${esc(S.input.photo)}): check the fields against it</summary><img class="photo" alt="The uploaded photo" src="${esc(S.input.image)}"></details>`;
+  }
+  if (run.text) html += `<details><summary>Text the ${run.source === "ocr" ? "OCR" : "extractor"} read</summary><pre>${esc(run.text)}</pre></details>`;
   if (run.audit && run.audit.length) html += `<details><summary>Audit log</summary><pre>${esc(run.audit.map((a) => `${a.at}  ${a.event}  ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => !["at","event"].includes(k))))}`).join("\n"))}</pre></details>`;
   html += `</section>`;
   $("out").innerHTML = html;

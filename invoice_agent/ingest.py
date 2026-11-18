@@ -2,9 +2,13 @@
 
 - PDF: the text layer, via pypdf in layout mode (keeps table columns apart).
 - Plain text: decoded as UTF-8.
-- Images (PNG/JPEG): OCR only if the optional `pytesseract` + Tesseract are
-  installed. Otherwise a clear error, and the graph sends the invoice to a
-  human, who can type the fields in.
+- Images (PNG/JPEG): the server does not run OCR (it would add a 30 MB
+  binary to a free serverless function). The demo page reads photos in the
+  visitor's browser with Tesseract.js and sends the recognised text, flagged
+  as OCR, so it always goes to a person. For a local service, server-side OCR
+  can be switched on with SERVER_OCR=true plus the optional `pytesseract` and
+  the Tesseract binary. Otherwise an image gets a clear message and the graph
+  sends it to a human, who can type the fields in.
 
 Scanned PDFs with no text layer are detected and reported plainly; the demo
 does not pretend to read them. Every failure is an `IngestError` with a
@@ -15,6 +19,7 @@ from __future__ import annotations
 
 import io
 import logging
+import os
 import re
 
 log = logging.getLogger(__name__)
@@ -35,8 +40,9 @@ LONG_TEXT_NOTE = (f"the document has more than {MAX_TEXT_CHARS:,} characters of 
                   "were read, so a person should check it")
 
 SCANNED_PDF_MESSAGE = (
-    "This PDF is a scanned image. The demo reads PDFs with a text layer; OCR is listed as a next step. "
-    "A reviewer can type the fields in by hand."
+    "This PDF is a scanned image. The server reads PDFs with a text layer and does not run OCR. "
+    "Upload a photo or screenshot of the page instead (the page reads images in your browser), "
+    "or a reviewer can type the fields in by hand."
 )
 
 _PDF_MAGIC = b"%PDF"
@@ -68,9 +74,14 @@ def sniff_kind(filename: str, data: bytes) -> str:
 
 
 IMAGE_MESSAGE = (
-    "This is a photo or image ({kind}). The demo reads PDFs with a text layer and does not run OCR on images. "
-    "Export or print the invoice to PDF and upload that, or use 'Correct fields' to type the fields in."
+    "This is a photo or image ({kind}). The server does not run OCR on images; the demo page reads photos "
+    "in your browser and sends the text. Upload it through the page, export the invoice to PDF, "
+    "or use 'Correct fields' to type the fields in."
 )
+
+
+def server_ocr_enabled() -> bool:
+    return os.getenv("SERVER_OCR", "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def shorten(text: str) -> str:
@@ -131,6 +142,8 @@ def pdf_to_text(data: bytes) -> str:
 
 def image_to_text(data: bytes) -> str:
     kind = "PNG" if data.startswith(_PNG_MAGIC) else "JPEG"
+    if not server_ocr_enabled():
+        raise IngestError(IMAGE_MESSAGE.format(kind=kind))
     try:  # optional: pip install pytesseract pillow, plus the Tesseract binary
         import pytesseract
         from PIL import Image
