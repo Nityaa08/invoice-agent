@@ -68,7 +68,7 @@ def test_upload_get_and_idempotency(full):
 def test_review_resumes_the_graph(full):
     run = full.post("/invoices", data={"sample": "06_unknown_vendor.txt"}).json()
     assert run["status"] == "needs_review"
-    assert run["review_request"]["actions"] == ["approve", "reject", "correct"]
+    assert run["review_request"]["actions"] == ["approve", "reject", "correct", "recheck"]
 
     r = full.post(f"/invoices/{run['id']}/review", json={"action": "approve", "reviewer": "asha",
                                                            "note": "new supplier, onboarding"})

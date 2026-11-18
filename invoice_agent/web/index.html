@@ -100,6 +100,14 @@ details pre{margin-top:8px;max-height:300px}
 .notice b{display:block;margin-bottom:2px}
 .notice.warn{background:var(--warn-bg);color:var(--warn)}
 .uperr{margin-top:10px}
+.vform{display:grid;gap:8px;grid-template-columns:minmax(0,2fr) minmax(0,1.4fr) minmax(0,.8fr);margin-top:4px}
+.vform label{font-size:12px;color:var(--ink-3);display:grid;gap:3px}
+@media (max-width:560px){.vform{grid-template-columns:minmax(0,1fr)}}
+.vendors{list-style:none;display:grid;gap:6px;margin-top:4px;font-size:13.5px}
+.vendors li{display:flex;justify-content:space-between;align-items:center;gap:8px;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:7px 10px}
+.vendors code{color:var(--ink-3);font-size:11px}
+.linkbtn{font:inherit;font-size:12.5px;background:none;border:0;color:var(--ink-2);text-decoration:underline;cursor:pointer;padding:0}
+.tag{font-size:11px;font-weight:600;border-radius:6px;padding:1px 7px;background:var(--chip);color:var(--ink-2)}
 footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);font-size:13px}
 @media (max-width:860px){.grid{grid-template-columns:minmax(0,1fr)} nav .hide-sm{display:none}}
 @media (max-width:480px){.brand span{display:none} nav{gap:14px}}
@@ -135,6 +143,11 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
         <div class="uperr" id="uperr" role="alert" aria-live="polite"></div>
         <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word). Scanned PDFs and photos need OCR, which this demo does not run. Do not upload invoices with personal data to the public demo.</p>
       </section>
+      <section class="card" id="vendorcard" hidden>
+        <h2>Vendors you added</h2>
+        <ul class="vendors" id="vendorlist"></ul>
+        <p class="hint" id="vendorhint"></p>
+      </section>
       <section class="card">
         <h2>2 · Graph path</h2>
         <ol class="path" id="path"></ol>
@@ -168,12 +181,13 @@ const STATUS = {
   auto_approved: ["ok", "Auto-approved", "Every rule passed; saved without a human."],
   approved_after_correction: ["ok", "Approved after correction", "A reviewer corrected the fields and the rules then passed."],
   approved_by_reviewer: ["ok", "Approved by reviewer", "A reviewer approved it despite the failed checks."],
+  approved_after_recheck: ["ok", "Approved after re-check", "A reviewer added the vendor; the graph re-ran the vendor match and every rule, and they passed."],
   rejected: ["bad", "Rejected", "A reviewer rejected it. Saved as rejected; it does not count as on file."],
   needs_review: ["wait", "Needs review", "The graph is paused at human_review."],
   incomplete: ["bad", "Stopped by an error", "Progress is checkpointed; submit the same file again to resume."],
 };
 
-const S = { config: null, input: null, decisions: [], run: null, busy: false };
+const S = { config: null, input: null, decisions: [], run: null, busy: false, vendors: [] };
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 
@@ -207,6 +221,29 @@ async function api(url, opts) {
   }
   if (body === null) throw new Error("The server sent an answer that is not JSON.");
   return body;
+}
+
+// Vendors added in the demo live in this browser only (localStorage) and go to the
+// server with every run, where they are checked again. Storage can be blocked
+// (private windows), so every access is guarded and the page works without it.
+const VENDOR_KEY = "invoice-agent.vendors.v1";
+function loadVendors() {
+  try { const v = JSON.parse(localStorage.getItem(VENDOR_KEY) || "[]"); return Array.isArray(v) ? v.slice(0, 25) : []; }
+  catch (e) { return []; }
+}
+function saveVendors() { try { localStorage.setItem(VENDOR_KEY, JSON.stringify(S.vendors)); } catch (e) { /* not kept */ } }
+function vendorPayload() { return JSON.stringify(S.vendors.map(({ name, tax_id, currency }) => ({ name, tax_id, currency }))); }
+
+async function refreshVendors() {
+  if (S.config.demo_mode) { S.vendors = loadVendors(); }
+  else { S.vendors = (await api("/api/vendors")).filter((v) => v.source === "added"); }
+  const card = $("vendorcard");
+  card.hidden = !S.vendors.length;
+  $("vendorlist").innerHTML = S.vendors.map((v, i) => `<li><span>${esc(v.name)} <code>${esc(v.vendor_id)} · ${esc(v.currency)}${v.tax_id ? " · " + esc(v.tax_id) : ""}</code></span>` +
+    (S.config.demo_mode ? `<button type="button" class="linkbtn" data-forget="${i}">remove</button>` : "") + `</li>`).join("");
+  $("vendorhint").textContent = S.config.demo_mode
+    ? "Kept in this browser only and sent with each run; the server checks them again and stores nothing."
+    : "Saved in the service's SQLite database.";
 }
 
 const ACCEPTED = /\.(pdf|txt|png|jpe?g)$/i;
@@ -265,6 +302,12 @@ async function init() {
     const b = e.target.closest("button[data-file]");
     if (b) start({ sample: b.dataset.file });
   });
+  $("vendorlist").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-forget]");
+    if (!b) return;
+    S.vendors.splice(Number(b.dataset.forget), 1); saveVendors(); refreshVendors();
+  });
+  await refreshVendors().catch(() => {});
   $("uphint").textContent = `Up to ${S.config.max_upload_mb || 4} MB. ` + $("uphint").textContent;
   renderPath(null);
 }
@@ -288,7 +331,7 @@ async function submit() {
   try {
     let run;
     if (S.config.demo_mode) {
-      const fd = form(); fd.append("decisions", JSON.stringify(S.decisions));
+      const fd = form(); fd.append("decisions", JSON.stringify(S.decisions)); fd.append("vendors", vendorPayload());
       run = await api("/api/demo/run", { method: "POST", body: fd });
     } else {
       run = await api("/invoices", { method: "POST", body: form() });
@@ -305,7 +348,7 @@ async function review(decision) {
     if (S.config.demo_mode) {
       // Serverless keeps nothing between requests, so the page sends the file
       // again with every decision so far and the server replays them.
-      const fd = form(); fd.append("decisions", JSON.stringify([...S.decisions, decision]));
+      const fd = form(); fd.append("decisions", JSON.stringify([...S.decisions, decision])); fd.append("vendors", vendorPayload());
       run = await api("/api/demo/run", { method: "POST", body: fd });
       S.decisions.push(decision);
     } else {
@@ -345,6 +388,7 @@ function render(run) {
   renderPath(run);
   const [cls, title, sub] = STATUS[run.status] || ["", run.status, ""];
   const req = run.review_request;
+  const unknownVendor = req && run.invoice && (run.rules || []).some((r) => r.name === "vendor_is_known" && !r.passed);
   let html = `<section class="status ${cls}">
     <h3>${esc(title)}</h3><div class="meta">${esc(sub)} · ${esc(run.filename)} · extractor ${esc(run.extractor)} · run ${esc(run.id)}${run.duplicate_submission ? " · same file as an earlier run, not processed again" : ""}</div>`;
   if (req) {
@@ -355,9 +399,19 @@ function render(run) {
         <input type="text" id="note" placeholder="Note (why)" style="flex:2;min-width:160px">
       </div>
       <div class="row">
-        ${run.invoice ? `<button class="btn" data-act="approve">Approve anyway</button>` : ""}
+        ${unknownVendor ? `<button class="btn" data-act="vendor">Add this vendor…</button>` : ""}
+        ${run.invoice ? `<button class="btn${unknownVendor ? " ghost" : ""}" data-act="approve">Approve anyway</button>` : ""}
         <button class="btn ghost" data-act="correct">Correct fields…</button>
         <button class="btn ghost" data-act="reject">Reject</button>
+      </div>
+      <div id="vendoredit" hidden>
+        <div class="vform">
+          <label>Vendor name<input type="text" id="v-name" maxlength="120"></label>
+          <label>Tax id (GSTIN / VAT)<input type="text" id="v-tax" maxlength="40"></label>
+          <label>Currency<input type="text" id="v-cur" maxlength="3"></label>
+        </div>
+        <div class="row" style="margin-top:8px"><button class="btn" data-act="submit-vendor">Add vendor and re-check</button></div>
+        <p class="hint">${S.config.demo_mode ? "The demo keeps added vendors in this browser and sends them with each run." : "Saved to the vendor table; the paused run then re-runs the vendor match and every rule."} A name that matches an existing vendor, or a tax id that belongs to one, is refused.</p>
       </div>
       <div id="editor" hidden>
         <textarea id="fix" spellcheck="false"></textarea>
@@ -379,7 +433,7 @@ function render(run) {
   if (vm) {
     html += `<div class="vm"><span>Vendor match:</span><b>${esc(vm.vendor_name || "none")}</b>
       <span class="bar"><i style="width:${Math.max(0, Math.min(100, vm.score * 100))}%"></i></span>
-      <code>${vm.score.toFixed(2)}</code><span style="color:var(--ink-3)">${vm.matched ? "known vendor" : "below 0.75, not matched"}</span></div>`;
+      <code>${vm.score.toFixed(2)}</code><span style="color:var(--ink-3)">${vm.matched ? "known vendor" : "below 0.75, not matched"}</span>${vm.matched && vm.source === "added" ? `<span class="tag">added by a reviewer</span>` : ""}</div>`;
   }
   const draft = req && req.draft;
   if (run.invoice) html += `<pre>${esc(JSON.stringify(run.invoice, null, 2))}</pre>`;
@@ -409,8 +463,34 @@ function blankInvoice() {
     tax_rate: null, tax: 0, total: 0 };
 }
 
+async function addVendor(base) {
+  const body = { name: $("v-name").value, tax_id: $("v-tax").value || null, currency: $("v-cur").value, reviewer: base.reviewer };
+  setBusy(true);
+  try {
+    const v = await api("/api/vendors", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (S.config.demo_mode) {
+      if (!S.vendors.some((x) => x.vendor_id === v.vendor_id)) S.vendors.push({ vendor_id: v.vendor_id, name: v.name, tax_id: v.tax_id, currency: v.currency });
+      saveVendors();
+    }
+    await refreshVendors();
+  } catch (err) { setBusy(false); $("reviewerr").textContent = err.message; return; }
+  setBusy(false);
+  if (S.config.demo_mode) { S.decisions = []; return submit(); }  // a fresh run now finds the vendor
+  return review({ ...base, action: "recheck", note: base.note || "vendor added" });
+}
+
 function act(kind) {
   const base = { reviewer: $("reviewer").value || "reviewer", note: $("note").value };
+  if (kind === "vendor") {
+    const ed = $("vendoredit"); ed.hidden = !ed.hidden;
+    if (!ed.hidden && !$("v-name").value) {
+      $("v-name").value = S.run.invoice.vendor_name || "";
+      $("v-tax").value = S.run.invoice.vendor_tax_id || "";
+      $("v-cur").value = S.run.invoice.currency || "";
+    }
+    return;
+  }
+  if (kind === "submit-vendor") return addVendor(base);
   if (kind === "correct") {
     const ed = $("editor"); ed.hidden = !ed.hidden;
     if (ed.hidden || $("fix").value) return;  // closing, or reopening: keep what was typed

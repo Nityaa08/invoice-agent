@@ -3,7 +3,7 @@
 Full service (default, `uvicorn main:app`):
     POST /invoices                 upload a file (or pick a sample) -> runs the graph
     GET  /invoices/{id}            the run: extracted JSON, rule results, path, pending review
-    POST /invoices/{id}/review     approve / reject / correct -> resumes the paused graph
+    POST /invoices/{id}/review     approve / reject / correct / recheck -> resumes the paused graph
 
 Stateless demo (`DEMO_MODE=true`, used on Vercel):
     POST /api/demo/run             one request = one complete run in memory.
@@ -11,7 +11,10 @@ Stateless demo (`DEMO_MODE=true`, used on Vercel):
                                    same file and replayed, because a serverless
                                    function keeps nothing between requests.
 
-Both: GET / (page), GET /api/config, GET /api/samples, GET /api/samples/{file}, GET /api/health.
+Both: GET / (page), GET /api/config, GET /api/samples, GET /api/samples/{file}, GET /api/health,
+GET /api/vendors (the vendor master, plus added vendors in the full service) and
+POST /api/vendors (add a vendor from the review screen: saved in SQLite by the
+full service; in the demo only checked, and the page keeps it in the browser).
 
 The GET routes import nothing heavy: LangGraph, LangChain and the extractor
 load on the first POST, so a cold start that only serves the page is fast,
@@ -53,6 +56,8 @@ WEB_DIR = Path(__file__).resolve().parent / "web"
 MAX_DEMO_DECISIONS = 5
 MAX_DECISIONS_CHARS = 64 * 1024  # five corrected invoices fit easily in this
 DEMO_RUNS_PER_HOUR = 60  # per client IP and per function instance; DEMO_RUNS_PER_HOUR overrides it
+VENDOR_ADDS_PER_HOUR = 30  # POST /api/vendors, per client IP and instance
+MAX_VENDORS_CHARS = 16 * 1024  # the demo's list of added vendors, sent with every run
 
 # Edge caching. Vercel's CDN honours s-maxage and purges on every deploy, so these
 # can be long; browsers revalidate quickly. The health check is never cached.
@@ -106,10 +111,17 @@ def _safe_filename(name: str) -> str:
 
 
 class ReviewDecision(BaseModel):
-    action: str = Field(description="approve, reject or correct")
+    action: str = Field(description="approve, reject, correct or recheck")
     invoice: dict[str, Any] | None = Field(default=None, description="the corrected invoice, for 'correct'")
     reviewer: str | None = None
     note: str | None = None
+
+
+class NewVendor(BaseModel):
+    name: str = Field(max_length=200, description="the vendor's legal name, as printed")
+    tax_id: str | None = Field(default=None, max_length=40, description="GSTIN / VAT number, if it has one")
+    currency: str = Field(max_length=8, description="ISO 4217 code the vendor bills in")
+    reviewer: str | None = Field(default=None, max_length=80)
 
 
 def load_manifest() -> list[dict[str, Any]]:
@@ -269,13 +281,43 @@ def register_routes(app: FastAPI, settings: Settings) -> None:
     def sample_file(name: str):
         return FileResponse(_sample_path(name), headers={"Cache-Control": CACHE_STATIC})
 
+    vendor_limiter = _RateLimiter(int(os.getenv("VENDOR_ADDS_PER_HOUR") or VENDOR_ADDS_PER_HOUR))
+    service = None if settings.demo_mode else _register_full(app, settings)
     if settings.demo_mode:
         _register_demo(app, settings)
-    else:
-        _register_full(app, settings)
+
+    @app.head("/api/vendors", include_in_schema=False)
+    @app.get("/api/vendors")
+    def vendors():
+        if service is not None:
+            return _json(service.list_vendors(), NO_STORE)
+        from .config import DATA_DIR  # the demo: the read-only master, no numpy needed
+
+        rows = json.loads((DATA_DIR / "vendors.json").read_text(encoding="utf-8"))
+        return _json([dict(v, source="master") for v in rows], CACHE_STATIC)
+
+    @app.post("/api/vendors")
+    def add_vendor(request: Request, vendor: NewVendor):
+        if not vendor_limiter.allow(client_ip(request)):
+            raise HTTPException(429, "vendor limit reached; try again in an hour", headers={"Retry-After": "3600"})
+        from .vendors import VendorRejected
+
+        data = vendor.model_dump()
+        try:
+            if service is not None:
+                added = service.add_vendor(data, added_by=data.get("reviewer") or "reviewer")
+                return JSONResponse(dict(added, stored="server"), status_code=201)
+            from .service import default_matcher
+            from .vendors import check_new_vendor
+
+            # The demo stores nothing: the page keeps the checked vendor in the browser
+            # and sends it back with each run, where it is checked again.
+            return JSONResponse(dict(check_new_vendor(data, default_matcher()), stored="browser"), status_code=200)
+        except VendorRejected as exc:
+            raise HTTPException(422, str(exc))
 
 
-def _register_full(app: FastAPI, settings: Settings) -> None:
+def _register_full(app: FastAPI, settings: Settings):
     from .service import InvoiceService, NotAwaitingReview, RunNotFound
 
     service = InvoiceService.persistent(settings)
@@ -306,6 +348,27 @@ def _register_full(app: FastAPI, settings: Settings) -> None:
         except ValueError as exc:
             raise HTTPException(422, str(exc))
 
+    return service
+
+
+def _parse_vendors(raw: str) -> list[dict[str, Any]]:
+    """The demo's added vendors, sent back by the browser: parsed, bounded and checked again."""
+    if raw in ("", "[]"):
+        return []
+    if len(raw) > MAX_VENDORS_CHARS:
+        raise HTTPException(413, "the list of added vendors is too long")
+    try:
+        items = json.loads(raw)
+    except (json.JSONDecodeError, RecursionError) as exc:
+        raise HTTPException(422, "vendors must be a JSON list") from exc
+    from .service import default_matcher
+    from .vendors import VendorRejected, check_vendor_list
+
+    try:
+        return check_vendor_list(items, default_matcher())
+    except VendorRejected as exc:
+        raise HTTPException(422, str(exc))
+
 
 def _parse_decisions(raw: str) -> list[dict[str, Any]]:
     if len(raw) > MAX_DECISIONS_CHARS:
@@ -329,12 +392,14 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
 
     @app.post("/api/demo/run")
     async def demo_run(request: Request, file: UploadFile | None = File(None),
-                       sample: str | None = Form(None), decisions: str = Form("[]")):
+                       sample: str | None = Form(None), decisions: str = Form("[]"),
+                       vendors: str = Form("[]")):
         if not limiter.allow(client_ip(request)):
             raise HTTPException(429, "demo limit reached; try again in an hour",
                                 headers={"Retry-After": "3600"})
         steps = _parse_decisions(decisions)
         filename, data = await _read_input(file, sample)
+        added = _parse_vendors(vendors)
         uploaded = not (sample and (file is None or not file.filename))
         log.info("demo run: %s, %d bytes, %s", "upload" if uploaded else "sample", len(data),
                  filename.rsplit(".", 1)[-1].lower() if "." in filename else "no extension")
@@ -344,7 +409,7 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
         run_settings = replace(settings, as_of=None) if uploaded and not settings.as_of_from_env else settings
         from .service import InvoiceService  # first POST pays for LangGraph; GETs never do
 
-        service = InvoiceService.ephemeral(run_settings)
+        service = InvoiceService.ephemeral(run_settings, vendors=added)
         run, _ = service.submit(filename, data)
         if run.get("ingest_error") or run.get("extraction_error"):
             log.info("demo run %s needs review: %s", run["id"], run.get("ingest_error") or run.get("extraction_error"))

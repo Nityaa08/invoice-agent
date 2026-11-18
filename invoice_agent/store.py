@@ -9,6 +9,8 @@ checkpoint database (which stores graph state so runs can pause and resume).
   results, vendor match). Saving is an upsert, so a retried save is harmless.
 - `ledger`: (vendor, invoice number) pairs already on file: seeded with paid
   invoices, plus every invoice this system approves. The duplicate rule reads it.
+- `vendors`: vendors a reviewer added from the review screen (the vendor
+  master in data/vendors.json stays read-only).
 - `audit`: an append-only log of what happened to each run.
 
 Pass ":memory:" for a throwaway store (tests, the stateless demo).
@@ -50,6 +52,14 @@ CREATE TABLE IF NOT EXISTS ledger (
     source TEXT NOT NULL,
     PRIMARY KEY (vendor_key, invoice_number)
 );
+CREATE TABLE IF NOT EXISTS vendors (
+    vendor_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    tax_id TEXT,
+    currency TEXT NOT NULL,
+    added_by TEXT NOT NULL,
+    added_at TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS audit (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
@@ -59,7 +69,8 @@ CREATE TABLE IF NOT EXISTS audit (
 );
 """
 
-APPROVED_STATUSES = {"auto_approved", "approved_by_reviewer", "approved_after_correction"}
+APPROVED_STATUSES = {"auto_approved", "approved_by_reviewer", "approved_after_correction",
+                     "approved_after_recheck"}
 
 
 def _now() -> str:
@@ -168,6 +179,21 @@ class InvoiceStore:
 
     def count_invoices(self) -> int:
         return self._conn.execute("SELECT COUNT(*) FROM invoices").fetchone()[0]
+
+    # --- vendors added by reviewers -----------------------------------------------
+
+    def add_vendor(self, vendor: dict[str, Any], added_by: str) -> None:
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR IGNORE INTO vendors (vendor_id, name, tax_id, currency, added_by, added_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (vendor["vendor_id"], vendor["name"], vendor.get("tax_id"), vendor["currency"], added_by, _now()),
+            )
+
+    def added_vendors(self) -> list[dict[str, Any]]:
+        rows = self._conn.execute("SELECT * FROM vendors ORDER BY added_at, vendor_id").fetchall()
+        return [{"vendor_id": r["vendor_id"], "name": r["name"], "tax_id": r["tax_id"], "currency": r["currency"],
+                 "source": "added", "added_by": r["added_by"], "added_at": r["added_at"]} for r in rows]
 
     # --- audit log -------------------------------------------------------------
 

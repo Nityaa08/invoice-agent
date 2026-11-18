@@ -3,6 +3,7 @@
     submit(filename, bytes)   -> run the graph until it finishes or pauses for review
     get(run_id)               -> the run as JSON (state, rules, path, pending review)
     review(run_id, decision)  -> resume a paused run with the reviewer's decision
+    add_vendor(vendor)        -> onboard a vendor from the review screen
 
 Two ways to build it:
 - `InvoiceService.persistent(settings)`: SQLite for invoices and SQLite for
@@ -31,7 +32,7 @@ from .extractors import Extractor, build_extractor
 from .graph import Deps, build_graph, validate_decision
 from .rules import PurchaseOrder, normalize_id
 from .store import InvoiceStore
-from .vendors import VendorMatcher
+from .vendors import VendorMatcher, check_new_vendor
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,8 @@ class InvoiceService:
     # --- construction ------------------------------------------------------------
 
     @staticmethod
-    def _deps(settings: Settings, store: InvoiceStore, extractor: Extractor | None) -> Deps:
+    def _deps(settings: Settings, store: InvoiceStore, extractor: Extractor | None,
+              matcher: VendorMatcher | None = None) -> Deps:
         store.seed_ledger(load_paid_invoices())
         as_of = settings.as_of
         provider = settings.extractor
@@ -91,7 +93,7 @@ class InvoiceService:
                 provider, model=settings.llm_model, api_key=settings.llm_api_key,
                 base_url=settings.llm_base_url, method=settings.llm_method,
             ),
-            matcher=default_matcher(),
+            matcher=matcher or default_matcher(),
             store=store,
             purchase_orders=load_purchase_orders(),
             today=(lambda: as_of) if as_of else date.today,
@@ -105,11 +107,15 @@ class InvoiceService:
             Path(p).parent.mkdir(parents=True, exist_ok=True)
         store = InvoiceStore(settings.db_path)
         saver = SqliteSaver(sqlite3.connect(settings.checkpoint_path, check_same_thread=False))
-        return cls(cls._deps(settings, store, extractor), saver)
+        matcher = default_matcher().with_vendors(store.added_vendors())
+        return cls(cls._deps(settings, store, extractor, matcher), saver)
 
     @classmethod
-    def ephemeral(cls, settings: Settings, extractor: Extractor | None = None) -> "InvoiceService":
-        return cls(cls._deps(settings, InvoiceStore(":memory:"), extractor), InMemorySaver())
+    def ephemeral(cls, settings: Settings, extractor: Extractor | None = None,
+                  vendors: list[dict[str, Any]] | None = None) -> "InvoiceService":
+        """In memory. `vendors`: added vendors, already checked (the demo gets them from the browser)."""
+        matcher = default_matcher().with_vendors(vendors or [])
+        return cls(cls._deps(settings, InvoiceStore(":memory:"), extractor, matcher), InMemorySaver())
 
     # --- operations --------------------------------------------------------------
 
@@ -148,6 +154,20 @@ class InvoiceService:
                          note=clean["note"])
         self._invoke(run_id, Command(resume=clean))
         return self.view(run_id)
+
+    def list_vendors(self) -> list[dict[str, Any]]:
+        return self.deps.matcher.all()
+
+    def add_vendor(self, data: Any, added_by: str = "reviewer") -> dict[str, Any]:
+        """Check and save a vendor a reviewer added. Raises VendorRejected with a readable reason."""
+        vendor = check_new_vendor(data, self.deps.matcher)
+        if vendor["vendor_id"] not in self.deps.matcher.vendors:
+            added_by = str(added_by or "reviewer")[:80]
+            self.store.add_vendor(vendor, added_by)
+            self.deps.matcher = self.deps.matcher.with_vendors([vendor])  # the graph reads it on every run
+            self.store.audit(f"vendor:{vendor['vendor_id']}", "vendor_added", vendor_id=vendor["vendor_id"],
+                             by=added_by)
+        return vendor
 
     def _invoke(self, run_id: str, payload: Any) -> None:
         try:

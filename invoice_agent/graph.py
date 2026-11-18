@@ -4,7 +4,9 @@
                  ^  |                        |
                  +--+ retry once             +-> human_review -> save
                     |                                 |  (interrupt, then resume)
-                    +-> human_review                  +-> match_vendor (after a correction)
+                    +-> human_review                  +-> match_vendor (after a correction,
+                                                                         or a recheck once the
+                                                                         reviewer added the vendor)
 
 Why a graph: the flow has a retry loop, a branch, and a pause for a human that
 may last days. LangGraph gives each of those a name (nodes, conditional edges,
@@ -36,7 +38,10 @@ from .store import InvoiceStore
 from .vendors import VendorMatcher
 
 MAX_EXTRACT_ATTEMPTS = 2  # the first try plus one retry with the error fed back
-REVIEW_ACTIONS = ("approve", "reject", "correct")
+# recheck: run the vendor match and every rule again on the same fields, for
+# when something outside the invoice changed (the reviewer added the vendor).
+REVIEW_ACTIONS = ("approve", "reject", "correct", "recheck")
+RECHECK_ACTIONS = ("correct", "recheck")
 
 
 class InvoiceState(TypedDict, total=False):
@@ -168,9 +173,10 @@ def build_graph(deps: Deps):
 
     def match_vendor(state: InvoiceState) -> dict:
         m = deps.matcher.match(state["invoice"]["vendor_name"])
+        source = deps.matcher.vendors.get(m.vendor_id, {}).get("source", "master") if m.vendor_id else None
         return {
             "vendor_match": {"vendor_id": m.vendor_id, "vendor_name": m.vendor_name,
-                             "score": m.score, "matched": m.matched, "tax_id": m.tax_id},
+                             "score": m.score, "matched": m.matched, "tax_id": m.tax_id, "source": source},
             "path": ["match_vendor"],
         }
 
@@ -193,9 +199,9 @@ def build_graph(deps: Deps):
         return {"rules": results, "path": ["validate"]}
 
     def auto_approve(state: InvoiceState) -> dict:
-        corrected = (state.get("review") or {}).get("action") == "correct"
-        return {"status": "approved_after_correction" if corrected else "auto_approved",
-                "path": ["auto_approve"]}
+        action = (state.get("review") or {}).get("action")
+        status = {"correct": "approved_after_correction", "recheck": "approved_after_recheck"}.get(action, "auto_approved")
+        return {"status": status, "path": ["auto_approve"]}
 
     def human_review(state: InvoiceState) -> dict:
         # interrupt() pauses the run here and saves state; the API resumes it with
@@ -212,6 +218,8 @@ def build_graph(deps: Deps):
         update: dict[str, Any] = {"review": decision, "path": ["human_review"]}
         if decision["action"] == "correct":
             update["invoice"] = decision["invoice"]
+            update["status"] = "revalidating"
+        elif decision["action"] == "recheck":
             update["status"] = "revalidating"
         else:
             update["status"] = "approved_by_reviewer" if decision["action"] == "approve" else "rejected"
@@ -247,7 +255,7 @@ def build_graph(deps: Deps):
         return "auto_approve" if all(r["passed"] for r in state["rules"]) else "human_review"
 
     def after_review(state: InvoiceState) -> Literal["match_vendor", "save"]:
-        return "match_vendor" if state["review"]["action"] == "correct" else "save"
+        return "match_vendor" if state["review"]["action"] in RECHECK_ACTIONS else "save"
 
     g = StateGraph(InvoiceState)
     g.add_node("ingest", ingest)
@@ -272,7 +280,7 @@ def build_graph(deps: Deps):
 def validate_decision(decision: Any, *, has_invoice: bool) -> dict[str, Any]:
     """Check a reviewer's decision. Raises ValueError with a readable message.
 
-    {"action": "approve" | "reject" | "correct", "invoice": {...} (for correct),
+    {"action": "approve" | "reject" | "correct" | "recheck", "invoice": {...} (for correct),
      "reviewer": "name", "note": "why"}
     """
     if not isinstance(decision, dict) or decision.get("action") not in REVIEW_ACTIONS:
@@ -280,8 +288,8 @@ def validate_decision(decision: Any, *, has_invoice: bool) -> dict[str, Any]:
     action = decision["action"]
     out = {"action": action, "reviewer": str(decision.get("reviewer") or "reviewer")[:80],
            "note": str(decision.get("note") or "")[:500]}
-    if action == "approve" and not has_invoice:
-        raise ValueError("nothing to approve: no invoice was extracted; use 'correct' and enter the fields")
+    if action in ("approve", "recheck") and not has_invoice:
+        raise ValueError(f"nothing to {action}: no invoice was extracted; use 'correct' and enter the fields")
     if action == "correct":
         if not isinstance(decision.get("invoice"), dict):
             raise ValueError("'correct' needs the corrected invoice in 'invoice'")
