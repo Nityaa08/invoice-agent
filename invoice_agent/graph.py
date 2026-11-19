@@ -33,9 +33,11 @@ from typing_extensions import TypedDict
 from . import ingest as ingest_mod
 from .extractors import NOTES_KEY, ExtractionError, Extractor
 from .obs import traced
-from .rules import GoodsReceipt, PurchaseOrder, RuleContext, VendorMatch, duplicate_key, run_rules
+from .rules import (GoodsReceipt, PurchaseOrder, RuleContext, VendorMatch, describe_instructions, duplicate_key,
+                    run_rules)
 from .schema import Invoice
 from .store import InvoiceStore
+from .textguard import instructions
 from .vendors import VendorMatcher
 
 OCR_CHECK = "ocr_checked_by_person"
@@ -45,6 +47,7 @@ MAX_EXTRACT_ATTEMPTS = 2  # the first try plus one retry with the error fed back
 # recheck: run the vendor match and every rule again on the same fields, for
 # when something outside the invoice changed (the reviewer added the vendor).
 REVIEW_ACTIONS = ("approve", "reject", "correct", "recheck")
+INJECTION_REASON = "possible prompt injection"
 RECHECK_ACTIONS = ("correct", "recheck")
 
 
@@ -56,6 +59,10 @@ class InvoiceState(TypedDict, total=False):
     text: str
     ingest_error: str | None
     ingest_notes: list[str]  # what ingest had to leave out (an over-long document); forces a review
+    # Instruction-like snippets found in the raw text right after ingest (textguard.instructions, the
+    # same check as the no_instructions_in_document rule), so a review that happens before the rules
+    # run (extraction incomplete) still warns about them.
+    injection: list[str]
     attempts: int
     extraction_error: str | None  # for people: "could not find invoice date on the invoice"
     model_feedback: str | None  # for the model's retry: the exact schema errors
@@ -132,8 +139,13 @@ def review_reasons(state: InvoiceState) -> list[str]:
     if state.get("invoice") is None:
         tries = state.get("attempts", 0)
         after = f" after {tries} attempts" if tries > 1 else ""
-        return [f"extraction incomplete{after}: {state.get('extraction_error')}. "
-                "Use 'Correct fields' to fill in what is missing."]
+        reasons = [f"extraction incomplete{after}: {state.get('extraction_error')}. "
+                   "Use 'Correct fields' to fill in what is missing."]
+        # The rules have not run, so the injection rule cannot speak yet; say it here. Once an invoice
+        # exists the rule reports it (on the same text), so it is not repeated.
+        if state.get("injection"):
+            reasons.append(f"{INJECTION_REASON}: {describe_instructions(state['injection'])}")
+        return reasons
     return [f"{r['name']}: {r['detail']}" for r in state.get("rules", []) if not r["passed"]]
 
 
@@ -161,12 +173,12 @@ def build_graph(deps: Deps):
             if len(text) > ingest_mod.MAX_TEXT_CHARS:
                 text, notes = ingest_mod.shorten(text), [ingest_mod.LONG_TEXT_NOTE]
             out = {"text": text, "ingest_error": None, "ingest_notes": notes, "file_bytes": None,
-                   "path": ["ingest"]}
+                   "injection": instructions(text), "path": ["ingest"]}
             if ingest_mod.sniff_kind(state["filename"], data) == "image":
                 out["source"] = "ocr"  # server-side OCR (SERVER_OCR=true): same rule as the browser's
             return out
         except ingest_mod.IngestError as exc:
-            return {"text": "", "ingest_error": str(exc), "file_bytes": None, "path": ["ingest"]}
+            return {"text": "", "ingest_error": str(exc), "file_bytes": None, "injection": [], "path": ["ingest"]}
 
     def extract(state: InvoiceState) -> dict:
         attempt = state.get("attempts", 0) + 1
@@ -233,6 +245,8 @@ def build_graph(deps: Deps):
             "invoice": state.get("invoice"),
             "draft": state.get("draft"),
             "vendor_match": state.get("vendor_match"),
+            # Only before the rules ran; afterwards the no_instructions_in_document rule carries it.
+            "injection": (state.get("injection") or []) if state.get("invoice") is None else [],
             "actions": list(REVIEW_ACTIONS),
         })
         decision = validate_decision(decision, has_invoice=state.get("invoice") is not None)

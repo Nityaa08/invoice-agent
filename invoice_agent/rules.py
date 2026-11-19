@@ -417,16 +417,21 @@ def no_lookalike_characters(invoice: Invoice, ctx: RuleContext) -> RuleResult:
     return RuleResult("no_lookalike_characters", True, "names and numbers use plain characters")
 
 
+def describe_instructions(hits: list[str]) -> str:
+    """The reviewer-facing words for `textguard.instructions()` hits; shared by the rule and the graph's
+    pre-check, which runs on the raw text even when extraction failed and no rule can run."""
+    quoted = "; ".join(f"'{h}'" for h in hits)
+    return (f"the document contains text addressed to an AI or a reviewer ({quoted}). It was ignored: "
+            "only these rules decide. A person should check where this invoice came from")
+
+
 def no_instructions_in_document(invoice: Invoice, ctx: RuleContext) -> RuleResult:
     """Text that talks to an AI or a reviewer has no place on an invoice."""
     fields = " ".join(str(v) for v in (invoice.vendor_name, invoice.invoice_number, invoice.po_number) if v)
     fields += " " + " ".join(li.description for li in invoice.line_items)
     hits = instructions(ctx.document_text + "\n" + fields)
     if hits:
-        quoted = "; ".join(f"'{h}'" for h in hits)
-        return RuleResult("no_instructions_in_document", False,
-                          f"the document contains text addressed to an AI or a reviewer ({quoted}). It was ignored: "
-                          "only these rules decide. A person should check where this invoice came from")
+        return RuleResult("no_instructions_in_document", False, describe_instructions(hits))
     return RuleResult("no_instructions_in_document", True, "no instructions to an AI or a reviewer in the text")
 
 

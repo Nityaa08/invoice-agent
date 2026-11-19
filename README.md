@@ -22,7 +22,7 @@
 | **MCP server** | `extract_invoice`, `validate_invoice`, `process_invoice`, `list_vendors`, `add_vendor` over stdio or streamable HTTP; no approve tool, by design | [`mcp_server.py`](invoice_agent/mcp_server.py) |
 | **Observability** | A timed timeline of every node in each run (shown on the page, `GET /api/runs/{id}/trace`), an audit log, JSON logs without document content, optional LangSmith | [`obs.py`](invoice_agent/obs.py) |
 | **Evals** | Field and decision accuracy on five labelled sets (samples, real-world-style, blind, QA, red-team); demo extractor vs model side by side | [`evals/run_eval.py`](evals/run_eval.py) |
-| **Security** | Two red-team rounds (35 findings, each with a regression test), a tight CSP, Origin checks, rate limits, bounded inputs | [`docs/RED-TEAM.md`](docs/RED-TEAM.md) |
+| **Security** | Two red-team rounds plus a follow-up (36 findings, each with a regression test), a tight CSP, Origin checks, rate limits, bounded inputs | [`docs/RED-TEAM.md`](docs/RED-TEAM.md) |
 | **Free tier** | Runs on Vercel's free plan: stateless demo mode, 0.25 s cold start (heavy imports wait for the first POST), CDN-cached reads, 30 s cap | [`api.py`](invoice_agent/api.py) |
 
 ## Architecture
@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 399 tests; five labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 405 tests; five labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -324,20 +324,20 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-399 tests, no network or API key needed, about 15 seconds. They passed on 2026-11-18 on Python 3.11, 3.12 and 3.13 (CI) and locally on 3.13.
+405 tests, no network or API key needed, about 15 seconds. They passed on 2026-11-18 on Python 3.11, 3.12 and 3.13 (CI); 405 passed locally on 3.13 on 2026-11-19.
 
 | File | What it covers |
 |---|---|
 | `test_rules.py` (42) | Every rule, table-driven: tolerances, float-safe money, date edge cases, duplicate normalization, PO vendor/currency/amount; schema rejects malformed output |
 | `test_three_way.py` (15) | The goods-receipt rule: partial deliveries, reworded lines, over-billing split across lines, unknown lines, no receipt yet, services POs; the short-delivery and split-PO samples |
-| `test_graph.py` (16) | Every path: happy path; interrupt then approve, reject, correct; a correction that still fails pauses again; retry with the error fed back; giving up after two attempts; unreadable files; duplicates; idempotent resubmission; **resume a review after a restart**; **resume a crashed run** |
+| `test_graph.py` (20) | Every path: happy path; interrupt then approve, reject, correct; a correction that still fails pauses again; retry with the error fed back; giving up after two attempts; unreadable files; duplicates; idempotent resubmission; **resume a review after a restart**; **resume a crashed run**; an injection warning on the first review even when extraction is incomplete (RT-36) |
 | `test_onboarding.py` (26) | Vendor checks (shadowing names, borrowed tax ids, lookalikes, instructions), the recheck action, persistence across a restart, the demo's localStorage story, tampered vendor lists, limits and cross-site POSTs |
 | `test_ocr.py` (14) | No server OCR by default, OCR text always reviewed, which decisions clear the OCR check, `source` validation, the optional server OCR, the pinned OCR library, SRI and the CSP |
 | `test_export.py` (13) | Export rows, CSV formula injection, the page and server columns match, `/api/runs` and `/api/runs/export` |
-| `test_mcp.py` (20) | The five tools over the SDK's in-process client, no approve tool, `--read-only`, untrusted inputs, injection reported to the client, the rate limit, a person finishing an MCP run, **stdio end to end** |
+| `test_mcp.py` (21) | The five tools over the SDK's in-process client, no approve tool, `--read-only`, untrusted inputs, injection reported to the client (also when extraction is incomplete), the rate limit, a person finishing an MCP run, **stdio end to end** |
 | `test_obs.py` (10) | The timeline for every node and after a review, the trace endpoint, JSON logs and traces with no document content, no stack traces in logs, LangSmith opt-in |
 | `test_llm_mode.py` (11) | `GROQ_API_KEY` switching, provider detection, timeouts that fit 30 s, the cache, provider errors never echoed, the key never in `/api/config`, `--compare` |
-| `test_api.py` (16) | Upload, get, review, idempotent 200, 404/409/413/422, the stateless demo with replayed decisions, rate limit, Vercel defaults, a top-level `app = FastAPI(...)` |
+| `test_api.py` (17) | Upload, get, review, idempotent 200, 404/409/413/422, the stateless demo with replayed decisions, rate limit, Vercel defaults, a top-level `app = FastAPI(...)` |
 | `test_page.py` (6) | One inline script and no inline handlers (the CSP), the static SVG diagram, the attack group, shortcuts ignored while typing, guarded storage |
 | `test_vendors.py` (15) | Embedder determinism, store contract, name variants matched, unknown names below threshold |
 | `test_extract_ingest.py` (29) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor, ingest errors |
@@ -488,7 +488,7 @@ evals/run_eval.py           field and decision accuracy on five sets; --compare 
 scripts/mcp_client_demo.py  starts the MCP server over stdio and calls every tool
 scripts/make_*.py           regenerate the samples and the test / QA / attack files
 docs/RED-TEAM.md            two red-team rounds: findings, fixes and tests
-tests/                      399 pytest tests; tests/fixtures/ holds the test files and their labels
+tests/                      405 pytest tests; tests/fixtures/ holds the test files and their labels
 ```
 
 ## Licence
