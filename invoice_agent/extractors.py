@@ -204,9 +204,9 @@ _LABELS: dict[str, str] = {
     "invoice_date": (
         r"invoice\s*date|inv\.?\s*date|bill\s*date|date\s+of\s+(?:issue|invoice)|issue\s*date|"
         r"date\s+issued|issued(?:\s+on)?|dated|tax\s*point(?:\s*/\s*date)?|rechnungsdatum|factuurdatum|"
-        r"date(?!\s+of\s+(?:supply|delivery|order|birth))"
+        r"date(?!\s+(?:of\s+(?:supply|delivery|order|birth)|due))"
     ),
-    "due_date": r"due\s*date|payment\s*due(?:\s*date)?|due\s+(?:on|by)|pay\s+by|due|fällig(?:keit|\s+am)?|vervaldatum",
+    "due_date": r"due\s*date|date\s+due|payment\s*due(?:\s*date)?|due\s+(?:on|by)|pay\s+by|due|fällig(?:keit|\s+am)?|vervaldatum",
     "po_number": (
         r"p\.?\s*o\.?(?![a-z]|-\w)\s*(?:number|no|#)?|purchase\s*order(?:\s*(?:no|number|#))?|"
         r"buyer'?s\s*order\s*(?:no|number)|order\s*ref(?:erence)?|your\s*order(?:\s*(?:no|number|ref))?"
@@ -307,7 +307,7 @@ def _amount_after(line: str, cell_end: int, decimal_comma: bool) -> float | None
 # --- line items --------------------------------------------------------------
 
 _TABLE_HEADER = re.compile(
-    r"\b(description|particulars|item|items|goods|services?|product|details|omschrijving|beschreibung)\b", re.I)
+    r"\b(description|particulars|item|items|goods|services?|product|details|activity|omschrijving|beschreibung)\b", re.I)
 _TABLE_MONEY = re.compile(r"\b(amount|total|price|rate|value|cost|net|unit|betrag|bedrag)\b", re.I)
 _NUMERIC_CELL = re.compile(
     r"^(?:[A-Z]{1,3}\$|[A-Z]{3}|Rs\.?|₹|\$|€|£)?\s*-?\d[\d.,]*\s*(?:[A-Za-z]{1,6}\.?|[A-Z]{3}|₹|€)?$")
@@ -350,6 +350,24 @@ def _parse_row(line: str, decimal_comma: bool) -> dict[str, Any] | None:
                             "unit_price": unit, "amount": amount}
         break  # only try the rightmost number as the amount
     return None
+
+
+def _is_amount_only_header(line: str) -> bool:
+    """'DESCRIPTION    AMOUNT (INR)': two cells, a description column then a money column."""
+    cells = [c for _, _, c in _cells(line)]
+    return (len(cells) == 2 and bool(_TABLE_HEADER.search(cells[0])) and not _TABLE_MONEY.search(cells[0])
+            and bool(_TABLE_MONEY.search(cells[1])) and _total_kind(cells[1]) is None)
+
+
+def _parse_amount_row(line: str, decimal_comma: bool) -> dict[str, Any] | None:
+    """A row of a description/amount table: some words, then one amount."""
+    cells = [c for _, _, c in _cells(line)]
+    if len(cells) != 2 or not re.search(r"[A-Za-z]{2}", cells[0]):
+        return None
+    amount = _row_numbers(cells[1:], decimal_comma)[0]
+    if amount is None or amount <= 0:
+        return None
+    return {"description": cells[0].strip(), "quantity": 1.0, "unit_price": amount, "amount": amount}
 
 
 # --- the extractor -------------------------------------------------------------
@@ -511,6 +529,13 @@ class DemoExtractor:
         """Rows under the first table header, until the totals start."""
         header_at = next((i for i, ln in enumerate(lines)
                           if _TABLE_HEADER.search(ln) and _TABLE_MONEY.search(ln) and len(_cells(ln)) >= 3), None)
+        # A table with only a description and an amount column (services and
+        # consultants' templates): each row is one item of quantity 1. Only when
+        # there is no fuller table, so a three-column header always wins.
+        amounts_only = False
+        if header_at is None:
+            header_at = next((i for i, ln in enumerate(lines) if _is_amount_only_header(ln)), None)
+            amounts_only = header_at is not None
         if header_at is None:
             return None, []
         items = []
@@ -520,7 +545,7 @@ class DemoExtractor:
                 continue
             if any(_total_kind(c) in {"subtotal", "total", "due", "tax_total"} for _, _, c in cells[:3]):
                 break
-            row = _parse_row(line, dc)
+            row = _parse_amount_row(line, dc) if amounts_only else _parse_row(line, dc)
             if row:
                 items.append(row)
         return header_at, items

@@ -352,10 +352,97 @@ def blind_canada_invoice() -> bytes:
 """)
 
 
+# --- blind set, round two (2026-11-20) ---------------------------------------------
+# Four layouts people get from common billing tools, written and labelled before
+# the extractor was run on them (blind2_labels.json has the first-run result).
+
+
+def blind2_saas_receipt() -> bytes:
+    """A SaaS invoice laid out like Stripe's: 'Date of issue', 'Date due', 'Amount due'."""
+    return _html_pdf(CSS + """
+<div class="cols"><div><h2 style="margin:0">Invoice</h2>
+<table class="no" style="width:auto;margin-top:6px">
+<tr><td>Invoice number</td><td>8F3A21C9-0004</td></tr>
+<tr><td>Date of issue</td><td>November 3, 2026</td></tr>
+<tr><td>Date due</td><td>December 3, 2026</td></tr></table></div>
+<div style="text-align:right"><b>Acme Analytics, Inc.</b></div></div>
+<div class="cols" style="margin-top:10px"><div><b>Acme Analytics, Inc.</b><br>548 Market St<br>San Francisco, CA 94104</div>
+<div><b>Bill to</b><br>Greenleaf Foods<br>Portland, ME 04101</div></div>
+<h3>$1,250.00 USD due December 3, 2026</h3>
+<table><tr><th>Description</th><th class="r">Qty</th><th class="r">Unit price</th><th class="r">Amount</th></tr>
+<tr><td>Growth plan (Nov 3 &ndash; Dec 3, 2026)</td><td class="r">1</td><td class="r">$1,000.00</td><td class="r">$1,000.00</td></tr>
+<tr><td>Additional seats</td><td class="r">5</td><td class="r">$50.00</td><td class="r">$250.00</td></tr></table>
+<table class="no" style="width:45%;margin-left:55%;margin-top:8px">
+<tr><td>Subtotal</td><td class="r">$1,250.00</td></tr><tr><td>Total</td><td class="r">$1,250.00</td></tr>
+<tr><td><b>Amount due</b></td><td class="r"><b>$1,250.00 USD</b></td></tr></table>
+""", fmt="Letter")
+
+
+def blind2_small_business() -> bytes:
+    """A small-business invoice laid out like QuickBooks: DATE/ACTIVITY/QTY/RATE/AMOUNT, BALANCE DUE."""
+    return _html_pdf(CSS + """
+<div class="cols"><div><b>Harbor Lane Design LLC</b><br>12 Harbor Lane, Portland, ME 04101</div>
+<div><h2 style="margin:0;color:#2a6">INVOICE</h2></div></div>
+<div class="cols" style="margin-top:10px"><div><b>BILL TO</b><br>Greenleaf Foods<br>88 Commercial St, Portland, ME</div>
+<table class="no" style="width:auto"><tr><td>INVOICE #</td><td>1047</td></tr><tr><td>DATE</td><td>10/28/2026</td></tr>
+<tr><td>DUE DATE</td><td>11/27/2026</td></tr><tr><td>TERMS</td><td>Net 30</td></tr></table></div>
+<table style="margin-top:10px"><tr><th>DATE</th><th>ACTIVITY</th><th class="r">QTY</th><th class="r">RATE</th><th class="r">AMOUNT</th></tr>
+<tr><td>10/20/2026</td><td>Logo design</td><td class="r">1</td><td class="r">1,800.00</td><td class="r">1,800.00</td></tr>
+<tr><td>10/22/2026</td><td>Brand guidelines</td><td class="r">1</td><td class="r">950.00</td><td class="r">950.00</td></tr>
+<tr><td>10/25/2026</td><td>Business card layout</td><td class="r">2</td><td class="r">150.00</td><td class="r">300.00</td></tr></table>
+<table class="no" style="width:45%;margin-left:55%;margin-top:8px">
+<tr><td>SUBTOTAL</td><td class="r">3,050.00</td></tr><tr><td>TAX (5%)</td><td class="r">152.50</td></tr>
+<tr><td>TOTAL</td><td class="r">3,202.50</td></tr><tr><td><b>BALANCE DUE</b></td><td class="r"><b>$3,202.50</b></td></tr></table>
+""", fmt="Letter")
+
+
+def blind2_gst_line_tax() -> bytes:
+    """A GST invoice laid out like Zoho Books: per-line CGST and SGST columns, 'Balance Due'."""
+    return _html_pdf(CSS + """
+<div class="cols"><div><b>Kaveri Cloud Solutions Pvt Ltd</b><br>Bengaluru, Karnataka 560001<br>GSTIN 29AAKCK1234M1Z9</div>
+<div style="text-align:right"><h2 style="margin:0">TAX INVOICE</h2>Invoice# KCS/2026-27/0381<br>Balance Due ₹53,100.00</div></div>
+<table class="no" style="width:auto;margin-top:8px">
+<tr><td>Invoice Date :</td><td>05/11/2026</td></tr><tr><td>Terms :</td><td>Net 15</td></tr><tr><td>Due Date :</td><td>20/11/2026</td></tr></table>
+<p><b>Bill To</b> Ananta Retail LLP &nbsp; Place Of Supply: Karnataka (29)</p>
+<table><tr><th>#</th><th>Item &amp; Description</th><th>HSN/SAC</th><th class="r">Qty</th><th class="r">Rate</th>
+<th class="r">CGST %</th><th class="r">CGST Amt</th><th class="r">SGST %</th><th class="r">SGST Amt</th><th class="r">Amount</th></tr>
+<tr><td>1</td><td>Cloud hosting - November</td><td>998315</td><td class="r">1.00</td><td class="r">40,000.00</td>
+<td class="r">9%</td><td class="r">3,600.00</td><td class="r">9%</td><td class="r">3,600.00</td><td class="r">40,000.00</td></tr>
+<tr><td>2</td><td>Managed backups</td><td>998315</td><td class="r">2.00</td><td class="r">2,500.00</td>
+<td class="r">9%</td><td class="r">450.00</td><td class="r">9%</td><td class="r">450.00</td><td class="r">5,000.00</td></tr></table>
+<table class="no" style="width:45%;margin-left:55%;margin-top:8px">
+<tr><td>Sub Total</td><td class="r">45,000.00</td></tr><tr><td>CGST9 (9%)</td><td class="r">4,050.00</td></tr>
+<tr><td>SGST9 (9%)</td><td class="r">4,050.00</td></tr><tr><td><b>Total</b></td><td class="r"><b>₹53,100.00</b></td></tr>
+<tr><td><b>Balance Due</b></td><td class="r"><b>₹53,100.00</b></td></tr></table>
+""")
+
+
+def blind2_consultant() -> bytes:
+    """A consultant's invoice from a word-processor template: DESCRIPTION and AMOUNT only, no quantities."""
+    return _html_pdf(CSS + """
+<h1 style="margin:0">INVOICE</h1>
+<div class="cols" style="margin-top:8px"><div><b>Rhea Kapoor Consulting</b><br>Flat 4B, Linking Road, Mumbai 400050<br>rhea@example.com</div>
+<table class="no" style="width:auto"><tr><td>Invoice No:</td><td>RK-2026-014</td></tr><tr><td>Date:</td><td>12 November 2026</td></tr>
+<tr><td>Due:</td><td>27 November 2026</td></tr></table></div>
+<p><b>Billed to:</b> Ananta Retail LLP, Bengaluru</p>
+<table><tr><th>DESCRIPTION</th><th class="r">AMOUNT (INR)</th></tr>
+<tr><td>Pricing strategy workshop (2 days)</td><td class="r">60,000.00</td></tr>
+<tr><td>Competitor research report</td><td class="r">25,000.00</td></tr>
+<tr><td>Travel (Mumbai - Bengaluru, at cost)</td><td class="r">9,400.00</td></tr></table>
+<table class="no" style="width:45%;margin-left:55%;margin-top:8px">
+<tr><td><b>TOTAL</b></td><td class="r"><b>Rs. 94,400.00</b></td></tr></table>
+<p>Not registered under GST. Payment by bank transfer within 15 days.</p>
+""")
+
+
 BLIND = {
     "blind_uk_invoice.pdf": blind_uk_invoice,
     "blind_gst_hsn_summary.pdf": blind_gst_with_hsn_summary,
     "blind_canada_invoice.pdf": blind_canada_invoice,
+    "blind2_saas_receipt.pdf": blind2_saas_receipt,
+    "blind2_small_business.pdf": blind2_small_business,
+    "blind2_gst_line_tax.pdf": blind2_gst_line_tax,
+    "blind2_consultant.pdf": blind2_consultant,
 }
 
 FILES = {

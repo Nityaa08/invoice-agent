@@ -35,6 +35,16 @@ def test_blind_eval_meets_the_labels():
     assert report["field_accuracy"] == 1.0
 
 
+def test_blind2_eval_meets_the_labels():
+    # First run on 2026-11-20, before any change: 1 of 4 read fully, 41 of 44 fields
+    # ("Date due", an ACTIVITY column, a description/amount-only table). Now a regression set.
+    report = evaluate("blind2")
+    assert report["invoices"] == 4
+    assert report["decision_accuracy"] == 1.0
+    assert report["failed_rules_exact_match"] == 1.0
+    assert report["field_accuracy"] == 1.0
+
+
 def test_qa_eval_meets_the_labels():
     report = evaluate("qa")
     assert report["invoices"] == 10

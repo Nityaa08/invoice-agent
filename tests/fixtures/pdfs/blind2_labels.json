@@ -1,0 +1,54 @@
+{
+  "_about": "Round two of the blind set: four layouts from common billing tools (a Stripe-like SaaS invoice, a QuickBooks-like small-business invoice, a Zoho-like GST invoice with per-line tax columns, a consultant's DESCRIPTION/AMOUNT template), written and labelled on 2026-11-20 before the demo extractor was run on them. All four vendors are unknown, so every one goes to review; the score that matters is field accuracy. All companies are made up. Dates are checked as of 2026-11-20.",
+  "as_of": "2026-11-20",
+  "invoices": [
+    {
+      "file": "blind2_saas_receipt.pdf",
+      "title": "SaaS invoice like Stripe's (Date of issue, Date due, Amount due)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Acme Analytics, Inc.", "vendor_tax_id": null,
+        "invoice_number": "8F3A21C9-0004", "invoice_date": "2026-11-03", "due_date": "2026-12-03",
+        "currency": "USD", "po_number": null, "line_count": 2,
+        "subtotal": 1250.0, "tax": 0.0, "total": 1250.0
+      }
+    },
+    {
+      "file": "blind2_small_business.pdf",
+      "title": "Small-business invoice like QuickBooks' (DATE / ACTIVITY / QTY / RATE / AMOUNT, BALANCE DUE)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Harbor Lane Design LLC", "vendor_tax_id": null,
+        "invoice_number": "1047", "invoice_date": "2026-10-28", "due_date": "2026-11-27",
+        "currency": "USD", "po_number": null, "line_count": 3,
+        "subtotal": 3050.0, "tax": 152.5, "total": 3202.5
+      }
+    },
+    {
+      "file": "blind2_gst_line_tax.pdf",
+      "title": "GST invoice like Zoho Books' (CGST and SGST columns on every line)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Kaveri Cloud Solutions Pvt Ltd", "vendor_tax_id": "29AAKCK1234M1Z9",
+        "invoice_number": "KCS/2026-27/0381", "invoice_date": "2026-11-05", "due_date": "2026-11-20",
+        "currency": "INR", "po_number": null, "line_count": 2,
+        "subtotal": 45000.0, "tax": 8100.0, "total": 53100.0
+      }
+    },
+    {
+      "file": "blind2_consultant.pdf",
+      "title": "Consultant's invoice from a document template (DESCRIPTION and AMOUNT only)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Rhea Kapoor Consulting", "vendor_tax_id": null,
+        "invoice_number": "RK-2026-014", "invoice_date": "2026-11-12", "due_date": "2026-11-27",
+        "currency": "INR", "po_number": null, "line_count": 3,
+        "subtotal": 94400.0, "tax": 0.0, "total": 94400.0
+      }
+    }
+  ]
+}

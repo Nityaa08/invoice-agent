@@ -105,3 +105,48 @@ def test_build_extractor():
         build_extractor("llm", model="m")
     with pytest.raises(ValueError, match="unknown"):
         build_extractor("magic")
+
+
+# --- layouts from the 2026-11-20 blind round ------------------------------------
+
+def test_date_due_is_the_due_date_not_the_invoice_date():
+    text = ("Acme Analytics, Inc.\nInvoice number   8F3A21C9-0004\n"
+            "Date due         December 3, 2026\nDate of issue    November 3, 2026\n"
+            "Total            $100.00\n")
+    out = DemoExtractor().extract(text)
+    assert out["invoice_date"] == "2026-11-03"
+    assert out["due_date"] == "2026-12-03"
+
+
+def test_activity_column_is_a_line_item_table():
+    text = ("Harbor Lane Design LLC\nINVOICE #   1047\n\n"
+            " DATE          ACTIVITY                 QTY      RATE       AMOUNT\n"
+            " 10/20/2026    Logo design                1   1,800.00     1,800.00\n"
+            " 10/25/2026    Business card layout       2     150.00       300.00\n\n"
+            "                          SUBTOTAL                     2,100.00\n"
+            "                          TOTAL                        2,100.00\n")
+    out = DemoExtractor().extract(text)
+    assert [(i["description"], i["quantity"], i["amount"]) for i in out["line_items"]] == [
+        ("Logo design", 1.0, 1800.0), ("Business card layout", 2.0, 300.0)]
+    assert "_notes" not in out  # no "could not read the line-item table" note
+
+
+def test_description_and_amount_table_reads_each_row_as_one_item():
+    text = ("Rhea Kapoor Consulting\nInvoice No:   RK-2026-014\n\n"
+            " DESCRIPTION                                   AMOUNT (INR)\n"
+            " Pricing strategy workshop (2 days)               60,000.00\n"
+            " Travel (Mumbai - Bengaluru, at cost)              9,400.00\n\n"
+            "                          TOTAL               Rs. 69,400.00\n")
+    out = DemoExtractor().extract(text)
+    assert [(i["description"], i["quantity"], i["unit_price"]) for i in out["line_items"]] == [
+        ("Pricing strategy workshop (2 days)", 1.0, 60000.0),
+        ("Travel (Mumbai - Bengaluru, at cost)", 1.0, 9400.0)]
+    assert out["subtotal"] == out["total"] == 69400.0
+
+
+def test_two_column_lines_that_are_not_a_table_header_are_ignored():
+    # "Total items    2" and "Bill to    Ananta" are not a description/amount header.
+    text = ("Meera Iyer Design Studio\nInvoice No: MI-1\nBill to      Ananta Retail\n"
+            "Total items   2\nFor the brand identity project, as agreed.\nTotal   Rs. 85,000.00\n")
+    out = DemoExtractor().extract(text)
+    assert len(out["line_items"]) == 1 and out["line_items"][0]["description"].startswith("Invoice total")
