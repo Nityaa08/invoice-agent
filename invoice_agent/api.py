@@ -441,10 +441,26 @@ def _parse_decisions(raw: str) -> list[dict[str, Any]]:
         raise HTTPException(422, "decisions must be a JSON list of review decisions")
     if len(items) > MAX_DEMO_DECISIONS:
         raise HTTPException(422, f"at most {MAX_DEMO_DECISIONS} review decisions")
-    try:
-        return [ReviewDecision.model_validate(d).model_dump() for d in items]
-    except ValueError as exc:
-        raise HTTPException(422, "each decision needs an 'action' (approve, reject or correct)") from exc
+    out = []
+    for n, d in enumerate(items, 1):
+        try:
+            out.append(ReviewDecision.model_validate(d).model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, f"decision {n}: {_decision_problem(d, exc)}") from exc
+    return out
+
+
+def _decision_problem(decision: Any, exc: Exception) -> str:
+    """Name what is actually wrong with a review decision, instead of always blaming 'action'."""
+    if not isinstance(decision, dict):
+        return "each decision must be an object like {\"action\": \"approve\"}"
+    fields = {str(e["loc"][0]) for e in getattr(exc, "errors", lambda: [])() if e.get("loc")}
+    if "action" in fields or "action" not in decision:
+        return "it needs an 'action' (approve, reject, correct or recheck)"
+    if "invoice" in fields:
+        return "'invoice' must be one invoice object with its fields, not a list or a value"
+    named = ", ".join(sorted(fields)) or "the decision"
+    return f"{named} must be text"
 
 
 def _register_demo(app: FastAPI, settings: Settings) -> None:
