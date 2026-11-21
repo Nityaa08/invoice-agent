@@ -1,6 +1,6 @@
 # invoice-agent
 
-**Live demo: [invoice-agent-nityashree.vercel.app](https://invoice-agent-nityashree.vercel.app)** (demo mode: rule-based extractor, no API key) · by [Nityashree S](https://nityashree.in)
+**Live demo: [invoice.nityashree.in](https://invoice.nityashree.in)** (demo mode: rule-based extractor, no API key) · by [Nityashree S](https://nityashree.in)
 
 > A LangGraph agent that turns an invoice (PDF, photo or text) into validated, structured data ready for accounts payable. **The model reads; tested code decides.** An LLM fills a strict Pydantic schema, a small vector store matches the vendor, thirteen plain-Python rules check the numbers, the tax, the purchase order, the goods receipt and the text itself, and anything that fails stops for a human via LangGraph's `interrupt()` before it is saved. The same agent is also an **MCP server**, so Claude Desktop or any MCP client can use it as tools.
 
@@ -434,7 +434,7 @@ Steps (only after the GitHub repo exists):
 2. Framework preset: **FastAPI** (Vercel detects it from `main.py`). Leave build and output settings empty. Root directory: the repo root.
 3. Environment variables: none are required. Vercel sets `VERCEL=1`, which turns demo mode on. Optional: `GROQ_API_KEY` (see "The real model" above) to use a real model; the page then says "Live model".
 4. Deploy. Check `https://<project>.vercel.app/api/health` returns `{"status": "ok"}`, open the page and run "Wrong total" through to approval.
-5. Optional: under Settings → Domains rename the project domain (for example `invoice-agent-nityashree.vercel.app`), then put the link at the top of this README.
+5. Optional: under Settings → Domains rename the project domain (for example `invoice.nityashree.in`), then put the link at the top of this README.
 
 For the full service with persistence, run `uvicorn main:app` on any VM or container with a disk, or swap SQLite for Postgres (`langgraph-checkpoint-postgres` plus a Postgres `InvoiceStore`).
 
