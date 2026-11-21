@@ -204,9 +204,12 @@ _LABELS: dict[str, str] = {
     "invoice_date": (
         r"invoice\s*date|inv\.?\s*date|bill\s*date|date\s+of\s+(?:issue|invoice)|issue\s*date|"
         r"date\s+issued|issued(?:\s+on)?|dated|tax\s*point(?:\s*/\s*date)?|rechnungsdatum|factuurdatum|"
-        r"date(?!\s+(?:of\s+(?:supply|delivery|order|birth)|due))"
+        r"date\s+de\s+(?:la\s+)?facture|fecha\s+de\s+(?:emisi[oó]n|(?:la\s+)?factura|expedici[oó]n)|"
+        r"fecha(?!\s+de\s+(?:vencimiento|entrega|pago))|"
+        r"date(?!\s+(?:of\s+(?:supply|delivery|order|birth)|due|d['’]\s*[ée]ch[ée]ance|de\s+livraison))"
     ),
-    "due_date": r"due\s*date|date\s+due|payment\s*due(?:\s*date)?|due\s+(?:on|by)|pay\s+by|due|fällig(?:keit|\s+am)?|vervaldatum",
+    "due_date": (r"due\s*date|date\s+due|payment\s*due(?:\s*date)?|due\s+(?:on|by)|pay\s+by|due|fällig(?:keit|\s+am)?|vervaldatum|"
+                 r"date\s+d['’]\s*[ée]ch[ée]ance|[ée]ch[ée]ance|fecha\s+de\s+vencimiento|vencimiento"),
     "po_number": (
         r"p\.?\s*o\.?(?![a-z]|-\w)\s*(?:number|no|#)?|purchase\s*order(?:\s*(?:no|number|#))?|"
         r"buyer'?s\s*order\s*(?:no|number)|order\s*ref(?:erence)?|your\s*order(?:\s*(?:no|number|ref))?"
@@ -275,17 +278,20 @@ def _first_id(values: list[str]) -> str | None:
 _TOTAL_KINDS = [  # order matters: the first pattern that matches a cell wins
     ("skip", r"total\s+(?:in\s+words|qty|quantity|items?|pages?|hours|weight)|amount\s+(?:chargeable|in\s+words)|"
              r"tax\s+invoice|tax\s*point|vat\s*(?:id|reg|no|number)|gst\s*(?:in|reg|no|number|/)|hst\s*(?:no|number|reg)|"
-             r"tax\s*(?:id|reg|no|number)"),
+             r"tax\s*(?:id|reg|no|number)|btw-?\s*(?:nummer|nr|id)|tva\s+intra"),
     ("subtotal", r"sub\s*-?\s*total|total\s+(?:excl(?:uding)?|ex|before|net|taxable|without)\b|"
                  r"taxable\s+(?:value|amount)|net\s+(?:amount|total|value)|amount\s+before\s+tax|"
-                 r"zwischensumme|nettobetrag|totaal\s+excl"),
+                 r"zwischensumme|nettobetrag|totaal\s+excl|subtotaal|total\s+h\.?t\.?(?![a-z])|montant\s+h\.?t\.?(?![a-z])|"
+                 r"base\s+imponible"),
     ("tax_total", r"total\s+(?:tax|gst|vat)(?:\s+amount)?|tax\s+amount|total\s+taxes"),
     ("discount", r"(?:less\s*:?\s*)?(?:trade\s+|cash\s+|special\s+|volume\s+)?discount|rabatt|korting|remise"),
     ("tax", r"(?:c|s|ut|i)?gst(?![a-z])|vat(?![a-z])|(?:sales\s+)?tax(?![a-z])|cess(?![a-z])|"
-            r"hst(?![a-z])|pst(?![a-z])|mwst|ust\.?|btw"),
+            r"hst(?![a-z])|pst(?![a-z])|mwst|ust\.?|btw|tva(?![a-z])|iva(?![a-z])"),
     ("total", r"grand\s+total|invoice\s+total|total\s+amount(?:\s+payable)?|total\s+(?:incl|inc|including)\b|"
-              r"total\s+payable|net\s+payable|gesamtbetrag|total(?!\s*(?:excl|discount|due|before))"),
-    ("due", r"amount\s+(?:due|owing|owed)|balance\s+due|total\s+due|amount\s+payable|balance|payable|te\s+betalen"),
+              r"total\s+payable|net\s+payable|gesamtbetrag|totaal(?!\s+excl)|"
+              r"total(?!\s*(?:excl|discount|due|before))"),
+    ("due", r"amount\s+(?:due|owing|owed)|balance\s+due|total\s+due|amount\s+payable|balance|payable|te\s+betalen|"
+            r"net\s+[àa]\s+payer|reste\s+[àa]\s+payer"),
 ]
 _TOTAL_RE = [(k, re.compile(rf"^(?:{p})", re.I)) for k, p in _TOTAL_KINDS]
 
@@ -307,8 +313,9 @@ def _amount_after(line: str, cell_end: int, decimal_comma: bool) -> float | None
 # --- line items --------------------------------------------------------------
 
 _TABLE_HEADER = re.compile(
-    r"\b(description|particulars|item|items|goods|services?|product|details|activity|omschrijving|beschreibung)\b", re.I)
-_TABLE_MONEY = re.compile(r"\b(amount|total|price|rate|value|cost|net|unit|betrag|bedrag)\b", re.I)
+    r"\b(description|particulars|item|items|goods|services?|product|details|activity|omschrijving|beschreibung|"
+    r"désignation|designation|libellé|concepto|descripci[oó]n)\b", re.I)
+_TABLE_MONEY = re.compile(r"\b(amount|total|price|rate|value|cost|net|unit|betrag|bedrag|montant|prix|importe|precio|prijs)\b", re.I)
 _NUMERIC_CELL = re.compile(
     r"^(?:[A-Z]{1,3}\$|[A-Z]{3}|Rs\.?|₹|\$|€|£)?\s*-?\d[\d.,]*\s*(?:[A-Za-z]{1,6}\.?|[A-Z]{3}|₹|€)?$")
 
@@ -377,16 +384,16 @@ _SYMBOLS = [("US$", "USD"), ("CA$", "CAD"), ("C$", "CAD"), ("AU$", "AUD"), ("A$"
             ("£", "GBP"), ("$", "USD")]
 _CODES = ("INR", "USD", "EUR", "GBP", "AUD", "CAD", "NZD", "SGD", "HKD", "AED", "CHF", "JPY")
 _HEADER_CELL = re.compile(
-    r"^(?:(?:tax\s+)?invoice|bill\s+of\s+supply|receipt|rechnung|factuur|facture|original(?:\s+for\s+\w+)?|"
+    r"^(?:(?:tax\s+)?invoice|bill\s+of\s+supply|receipt|rechnung|factuur|facture|factura|original(?:\s+for\s+\w+)?|"
     r"duplicate|page\s+\d+.*|bill\s+to.*|ship\s+to.*|sold\s+to.*|e-?invoice)$", re.I)
 _COMPANY = re.compile(
-    r"\b(pvt|private|ltd|limited|llp|llc|inc|corp|co\.|company|gmbh|ag|b\.?v\.?|s\.?a\.?|sarl|plc|"
+    r"\b(pvt|private|ltd|limited|llp|llc|inc|corp|co\.|company|gmbh|ag|b\.?v\.?|s\.?a\.?|s\.l\.?|sarl|plc|"
     r"traders|enterprises|industries|services|studio|solutions|consulting)\b", re.I)
 _GSTIN = re.compile(r"\b\d{2}[A-Z]{5}\d{4}[A-Z][A-Z\d]Z[A-Z\d]\b")
 _TAX_ID = re.compile(
     r"\b(?:gstin(?:/uin)?|vat\s*(?:id|reg(?:istration)?\.?\s*(?:no|number)?\.?|no\.?|number)?|tax\s*id|"
-    r"ust-?id(?:nr)?\.?|btw(?:-?id)?|(?:gst\s*/\s*)?hst\s*(?:no|number|#)?\.?|business\s+number|tin|ein)"
-    r"\s*[:#.]?\s*([A-Z]{2}\s?\d[\dA-Z]*(?:[ \-]\d[\dA-Z]*)*|\d[\dA-Z]*(?:[ \-][\dA-Z]*\d[\dA-Z]*)*)", re.I)
+    r"ust-?id(?:nr)?\.?|btw(?:-?(?:id|nummer|nr))?|tva(?:\s+intracommunautaire)?|cif|nif|(?:gst\s*/\s*)?hst\s*(?:no|number|#)?\.?|business\s+number|tin|ein)"
+    r"\s*[:#.]?\s*([A-Z]{2}\s?\d[\dA-Z]*(?:[ \-]\d[\dA-Z]*)*|[A-Z]\d{7}[\dA-Z]\b|\d[\dA-Z]*(?:[ \-][\dA-Z]*\d[\dA-Z]*)*)", re.I)
 
 
 # "4 800.00" / "1 234 567,89": a space (or a thin space, which NFKC turns into one)

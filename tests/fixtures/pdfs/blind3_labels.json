@@ -1,0 +1,42 @@
+{
+  "_about": "Round three of the blind set: three plain invoices in French, Spanish and Dutch, written and labelled on 2026-11-21 before the demo extractor was run on them. The demo page says it reads EU layouts, but until now that meant German. All three vendors are unknown, so every one goes to review; the score that matters is field accuracy. All companies and tax ids are made up. Dates are checked as of 2026-11-21.",
+  "as_of": "2026-11-21",
+  "invoices": [
+    {
+      "file": "blind3_fr.pdf",
+      "title": "French facture (Total HT / TVA 20 % / Total TTC, Date d'échéance, 1 200,00 €)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Atelier Lumière SARL", "vendor_tax_id": "FR40303265045",
+        "invoice_number": "FA-2026-0412", "invoice_date": "2026-11-02", "due_date": "2026-12-02",
+        "currency": "EUR", "po_number": null, "line_count": 3,
+        "subtotal": 1660.0, "tax": 332.0, "total": 1992.0
+      }
+    },
+    {
+      "file": "blind3_es.pdf",
+      "title": "Spanish factura (Base imponible / IVA (21%) / Total factura, Fecha de emisión, CIF)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Distribuciones Norte S.L.", "vendor_tax_id": "B12345678",
+        "invoice_number": "2026/0881", "invoice_date": "2026-11-05", "due_date": "2026-12-05",
+        "currency": "EUR", "po_number": null, "line_count": 2,
+        "subtotal": 410.0, "tax": 86.1, "total": 496.1
+      }
+    },
+    {
+      "file": "blind3_nl.pdf",
+      "title": "Dutch factuur (Subtotaal / BTW 21% / Totaal, BTW-nummer, € 95,00)",
+      "decision": "review",
+      "failed_rules": ["vendor_is_known"],
+      "expected": {
+        "vendor_name": "Van Dijk Techniek B.V.", "vendor_tax_id": "NL123456789B01",
+        "invoice_number": "VD-7731", "invoice_date": "2026-11-03", "due_date": "2026-12-03",
+        "currency": "EUR", "po_number": null, "line_count": 2,
+        "subtotal": 522.5, "tax": 109.73, "total": 632.23
+      }
+    }
+  ]
+}

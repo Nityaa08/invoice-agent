@@ -21,7 +21,7 @@
 | **Batch + export** | Up to 20 files at once (or every sample), a queue with each status, CSV / JSON export with a formula-injection guard | the page, [`export.py`](invoice_agent/export.py) |
 | **MCP server** | `extract_invoice`, `validate_invoice`, `process_invoice`, `list_vendors`, `add_vendor` over stdio or streamable HTTP; no approve tool, by design | [`mcp_server.py`](invoice_agent/mcp_server.py) |
 | **Observability** | A timed timeline of every node in each run (shown on the page, `GET /api/runs/{id}/trace`), an audit log, JSON logs without document content, optional LangSmith | [`obs.py`](invoice_agent/obs.py) |
-| **Evals** | Field and decision accuracy on six labelled sets (samples, real-world-style, two blind rounds, QA, red-team); demo extractor vs model side by side | [`evals/run_eval.py`](evals/run_eval.py) |
+| **Evals** | Field and decision accuracy on seven labelled sets (samples, real-world-style, three blind rounds, QA, red-team); demo extractor vs model side by side | [`evals/run_eval.py`](evals/run_eval.py) |
 | **Security** | Two red-team rounds plus a follow-up (36 findings, each with a regression test), a tight CSP, Origin checks, rate limits, bounded inputs | [`docs/RED-TEAM.md`](docs/RED-TEAM.md) |
 | **Free tier** | Runs on Vercel's free plan: stateless demo mode, 0.25 s cold start (heavy imports wait for the first POST), CDN-cached reads, 30 s cap | [`api.py`](invoice_agent/api.py) |
 
@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 415 tests; six labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 418 tests; seven labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -324,7 +324,7 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-415 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 415 passed locally on 3.12 on 2026-11-20.
+418 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 418 passed locally on 3.13 on 2026-11-21.
 
 | File | What it covers |
 |---|---|
@@ -340,11 +340,11 @@ python -m pytest
 | `test_api.py` (17) | Upload, get, review, idempotent 200, 404/409/413/422, the stateless demo with replayed decisions, rate limit, Vercel defaults, a top-level `app = FastAPI(...)` |
 | `test_page.py` (6) | One inline script and no inline handlers (the CSP), the static SVG diagram, the attack group, shortcuts ignored while typing, guarded storage |
 | `test_vendors.py` (15) | Embedder determinism, store contract, name variants matched, unknown names below threshold |
-| `test_extract_ingest.py` (33) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor, ingest errors |
+| `test_extract_ingest.py` (35) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor (incl. French, Spanish and Dutch labels), ingest errors |
 | `test_llm_extractor.py` (5) | The real LangChain `ChatOpenAI` path with the HTTP call faked: the schema is sent as `response_format`, answers are parsed, schema and HTTP errors are handled, feedback reaches the model |
 | `test_real_world_pdfs.py` (55) | Uploads through `/api/demo/run` with Vercel's settings: GST, IGST, US, EU and multi-page invoices, prose, scans, broken and wrong-type files, label synonyms, number and date formats, `EXTRACTOR=llm` reading an upload |
 | `test_redteam.py` (96) | One test per finding of the first red-team round in [`docs/RED-TEAM.md`](docs/RED-TEAM.md) (the second round's tests live in the feature files above) |
-| `test_store.py` (4), `test_eval.py` (7) | Store idempotency and ledger; the eval on all six sets runs in CI |
+| `test_store.py` (4), `test_eval.py` (8) | Store idempotency and ledger; the eval on all seven sets runs in CI |
 
 CI runs the suite on Python 3.11, 3.12 and 3.13 ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
@@ -355,6 +355,7 @@ python evals/run_eval.py --markdown                 # the thirteen samples
 python evals/run_eval.py --set realworld --markdown # real-world-style PDFs
 python evals/run_eval.py --set blind --markdown     # three PDFs written after the extractor was frozen
 python evals/run_eval.py --set blind2 --markdown    # round two: four billing-tool layouts, 2026-11-20
+python evals/run_eval.py --set blind3 --markdown    # round three: French, Spanish and Dutch, 2026-11-21
 python evals/run_eval.py --set qa --markdown        # ten files from the 2026-11-17 QA pass
 python evals/run_eval.py --set redteam --markdown   # nine attack files; each must go to review
 # with a real model, and the two side by side on every set:
@@ -383,6 +384,8 @@ On 2026-11-18 every set was re-run after the new rule: samples, real-world-style
 **Blind set** (`blind_labels.json`). Three more PDFs (a UK, a Canadian and a GST invoice with an HSN tax summary) were written after the extractor was frozen and run once, unchanged: 1 of 3 read fully (with the wrong vendor name, 10 of 11 fields); the other two went to review because the invoice number or date was not found. Nothing was approved wrongly. The misses were then fixed, so this set is now a regression set too (100%). That first run is the honest number for unseen layouts: the demo extractor fails safe, but it misses often. A real model and a larger, truly held-out set of real invoices are the next step.
 
 **Blind set, round two** (`blind2_labels.json`, 2026-11-20). Four layouts people get from common billing tools, written and labelled before the extractor was run on them: a SaaS invoice laid out like Stripe's, a small-business invoice like QuickBooks' (DATE / ACTIVITY / QTY / RATE / AMOUNT), a GST invoice like Zoho Books' with CGST and SGST columns on every line, and a consultant's DESCRIPTION / AMOUNT template. First run, unchanged: **1 of 4 read fully, 41 of 44 fields (93%)**. The SaaS invoice lost its due date ("Date due" was not a known label), and the QuickBooks-style and consultant invoices lost their line items (an ACTIVITY column was not recognised as a table, and a table with only a description and an amount was not read at all), so both went to review with "could not read the line-item table". All four went to review, correctly (unknown vendors); nothing was approved wrongly. The three misses were fixed the same day and the other five sets did not change, so this round is now a regression set too (100%).
+
+**Blind set, round three** (`blind3_labels.json`, 2026-11-21). The page says the demo reads EU layouts, but every EU invoice so far was German. Three plain invoices in French, Spanish and Dutch, written and labelled before the extractor was run on them. First run, unchanged: **0 of 3 read fully**. The Spanish and Dutch invoices were not extracted at all ("Fecha de emisión", "Base imponible", "Totaal" and "Subtotaal" were not known labels). The French one was worse: "Total HT" (before tax) was read as the total and "TVA" was not read as tax, so a 1 992,00 € invoice showed a total of 1 660,00 €. All three went to review (unknown vendors, and the French one also for its unread line items), so nothing was approved, but a reviewer would have seen the wrong total. Fixed the same day by adding the French, Spanish and Dutch labels for dates, totals, tax, tax ids and table headers; the other six sets did not change, so this round is now a regression set too (100%, 33 of 33 fields). Italian, Portuguese and other languages are still not read.
 
 **QA set** ([`tests/fixtures/qa/`](tests/fixtures/qa/), made by [`scripts/make_qa_invoices.py`](scripts/make_qa_invoices.py)). Ten files written on 2026-11-17 for an end-to-end pass, mostly from vendors in the vendor master so a correct read should be auto-approved: a CGST + SGST invoice, an IGST bill, a US, a UK VAT and a three-page invoice, a discount, amounts printed as `4 800.00 SGD`, a text file and two photos. Run once before any change: 6 of the 8 readable invoices were read fully and auto-approved; the discount invoice went to review (the schema had no discount field) and the `4 800.00 SGD` one was misread (600.00) and went to review. Nothing was approved wrongly. Both were fixed, so this is a regression set now (100% of 88 fields, 10 of 10 decisions).
 
@@ -437,7 +440,7 @@ For the full service with persistence, run `uvicorn main:app` on any VM or conta
 
 ## Limits
 
-- **The demo extractor reads common text-layer layouts, not every invoice.** On first, blind runs it fully read 1 of 3 unseen layouts (2026-11-16) and 1 of 4 (2026-11-20; 41 of 44 fields) (see Eval); what it cannot read goes to a human with the reason, it does not guess. Real invoices at volume need the model (`GROQ_API_KEY`). **The real-model path is tested with a faked HTTP response and has not been evaluated against a live model yet**; `--compare` is ready for that run.
+- **The demo extractor reads common text-layer layouts, not every invoice.** On first, blind runs it fully read 1 of 3 unseen layouts (2026-11-16), 1 of 4 (2026-11-20; 41 of 44 fields) and 0 of 3 French, Spanish and Dutch invoices (2026-11-21) (see Eval). Its labels are English, German, French, Spanish and Dutch; what it cannot read goes to a human with the reason, it does not guess. Real invoices at volume need the model (`GROQ_API_KEY`). **The real-model path is tested with a faked HTTP response and has not been evaluated against a live model yet**; `--compare` is ready for that run.
 - **The eval sets are small and not truly held out** (see above). They show each path works; they do not measure extraction quality on real invoices.
 - **OCR is browser-only and English-only.** Photos are read by Tesseract.js in the visitor's browser (about 6 MB downloaded once; a few seconds per page on a laptop, slower on old phones). OCR misreads digits, so every OCR'd invoice goes to a person. Scanned PDFs are not OCR'd (that would need rendering the PDF in the browser first); the page asks for a photo or screenshot instead. The live CDN load was not tested from the build machine (see RT-32), only the same pinned files served locally.
 - **Vendor onboarding is immediate.** An added vendor is matched at once; a real AP team would have a second person approve vendor-master changes. In the demo, added vendors exist only in that visitor's browser.
@@ -487,7 +490,7 @@ invoice_agent/
   web/index.html            the one-page UI: queue, review, OCR, export, timeline
 data/                       vendor master, POs, goods receipts, paid invoices (all fictional)
 samples/                    13 synthetic invoices + manifest.json (hand labels)
-evals/run_eval.py           field and decision accuracy on six sets; --compare demo vs model
+evals/run_eval.py           field and decision accuracy on seven sets; --compare demo vs model
 scripts/mcp_client_demo.py  starts the MCP server over stdio and calls every tool
 scripts/make_*.py           regenerate the samples and the test / QA / attack files
 docs/RED-TEAM.md            two red-team rounds: findings, fixes and tests

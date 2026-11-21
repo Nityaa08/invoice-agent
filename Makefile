@@ -28,7 +28,7 @@ eval:             ## the samples
 	$(PY) evals/run_eval.py --markdown
 
 eval-all:         ## every labelled set
-	for s in samples realworld blind blind2 qa redteam; do $(PY) evals/run_eval.py --set $$s --markdown; echo; done
+	for s in samples realworld blind blind2 blind3 qa redteam; do $(PY) evals/run_eval.py --set $$s --markdown; echo; done
 
 compare:          ## demo extractor vs the model on every set (needs GROQ_API_KEY or LLM_API_KEY)
 	$(PY) evals/run_eval.py --compare --set all

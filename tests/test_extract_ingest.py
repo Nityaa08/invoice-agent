@@ -150,3 +150,38 @@ def test_two_column_lines_that_are_not_a_table_header_are_ignored():
             "Total items   2\nFor the brand identity project, as agreed.\nTotal   Rs. 85,000.00\n")
     out = DemoExtractor().extract(text)
     assert len(out["line_items"]) == 1 and out["line_items"][0]["description"].startswith("Invoice total")
+
+
+def test_french_total_ht_is_the_subtotal_not_the_total():
+    # Blind round three (2026-11-21): "Total HT" (before tax) was read as the total,
+    # TVA was not read as tax, so a 1 992,00 € invoice showed a total of 1 660,00 €.
+    text = (
+        "FACTURE\nAtelier Test SARL\nN° TVA : FR40303265045\nFacture n° : FA-1\n"
+        "Date d'échéance : 02/12/2026\nDate de facture : 02/11/2026\n\n"
+        "Désignation      Qté      Prix unitaire HT      Montant HT\n"
+        "Conception          2          100,00 €          200,00 €\n\n"
+        "Total HT : 200,00 €\nTVA 20 % : 40,00 €\nTotal TTC : 240,00 €\n"
+    )
+    out = DemoExtractor().extract(text)
+    assert (out["subtotal"], out["tax"], out["total"]) == (200.0, 40.0, 240.0)
+    assert out["tax_rate"] == 20.0
+    # the due date printed first must not be taken as the issue date
+    assert (out["invoice_date"], out["due_date"]) == ("2026-11-02", "2026-12-02")
+    assert out["vendor_tax_id"] == "FR40303265045"
+    assert [i["amount"] for i in out["line_items"]] == [200.0]
+
+
+def test_spanish_and_dutch_labels_are_read():
+    es = DemoExtractor().extract(
+        "FACTURA\nPrueba Norte S.L.\nCIF: B12345678\nNº de factura: 7\n"
+        "Fecha de vencimiento: 05/12/2026\nFecha de emisión: 05/11/2026\n\n"
+        "Concepto       Cantidad    Precio unitario    Importe\nCajas           10          1,50 €       15,00 €\n\n"
+        "Base imponible: 15,00 €\nIVA (21%): 3,15 €\nTotal factura: 18,15 €\n")
+    assert es["vendor_name"] == "Prueba Norte S.L."
+    assert (es["invoice_date"], es["due_date"], es["vendor_tax_id"]) == ("2026-11-05", "2026-12-05", "B12345678")
+    assert (es["subtotal"], es["tax"], es["total"], len(es["line_items"])) == (15.0, 3.15, 18.15, 1)
+    nl = DemoExtractor().extract(
+        "FACTUUR\nTest B.V.\nBTW-nummer: NL123456789B01\nFactuurnummer: T-1\nFactuurdatum: 03-11-2026\n\n"
+        "Omschrijving     Aantal     Prijs       Bedrag\nOnderdelen         2      € 10,00     € 20,00\n\n"
+        "Subtotaal: € 20,00\nBTW 21%: € 4,20\nTotaal: € 24,20\n")
+    assert (nl["subtotal"], nl["tax"], nl["total"], nl["vendor_tax_id"]) == (20.0, 4.2, 24.2, "NL123456789B01")

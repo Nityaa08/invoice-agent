@@ -26,6 +26,8 @@ Two sets:
                      (blind_labels.json); the honest number
     --set blind2     round two: four billing-tool layouts written on 2026-11-20
                      before the extractor saw them (blind2_labels.json)
+    --set blind3     round three: French, Spanish and Dutch invoices written on
+                     2026-11-21 before the extractor saw them (blind3_labels.json)
     --set qa         ten files from the 2026-11-17 QA pass (tests/fixtures/qa/),
                      mostly known vendors, so a correct read is auto-approved
     --set redteam    nine attack files (tests/fixtures/redteam/); each must go
@@ -70,6 +72,7 @@ SETS = {
     "realworld": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "labels.json", "invoices"),
     "blind": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "blind_labels.json", "invoices"),
     "blind2": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "blind2_labels.json", "invoices"),
+    "blind3": (ROOT / "tests" / "fixtures" / "pdfs", ROOT / "tests" / "fixtures" / "pdfs" / "blind3_labels.json", "invoices"),
     "qa": (ROOT / "tests" / "fixtures" / "qa", ROOT / "tests" / "fixtures" / "qa" / "labels.json", "invoices"),
     "redteam": (ROOT / "tests" / "fixtures" / "redteam", ROOT / "tests" / "fixtures" / "redteam" / "labels.json", "invoices"),
 }

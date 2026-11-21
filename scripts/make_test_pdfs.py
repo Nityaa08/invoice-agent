@@ -435,6 +435,57 @@ def blind2_consultant() -> bytes:
 """)
 
 
+# --- blind set, round three (2026-11-21) -------------------------------------------
+# Plain French, Spanish and Dutch invoices (one text line per row), written and
+# labelled before the extractor was run on them (blind3_labels.json has the first run).
+
+
+def _lines_pdf(lines: list[str]) -> bytes:
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    y = 800
+    for line in lines:
+        c.setFont("Helvetica", 10)
+        c.drawString(40, y, line)
+        y -= 15
+    c.save()
+    return buf.getvalue()
+
+
+def blind3_fr() -> bytes:
+    return _lines_pdf([
+        "FACTURE", "Atelier Lumière SARL", "12 rue des Lilas, 75011 Paris, France", "N° TVA : FR40303265045", "",
+        "Facture n° : FA-2026-0412", "Date de facture : 02/11/2026", "Date d'échéance : 02/12/2026", "",
+        "Client : Example Retail Co", "",
+        "Désignation                         Qté      Prix unitaire HT        Montant HT",
+        "Conception graphique                  1          1 200,00 €           1 200,00 €",
+        "Impression brochures                500              0,85 €             425,00 €",
+        "Livraison                             1             35,00 €              35,00 €",
+        "", "Total HT : 1 660,00 €", "TVA 20 % : 332,00 €", "Total TTC : 1 992,00 €", "",
+        "Conditions de paiement : 30 jours"])
+
+
+def blind3_es() -> bytes:
+    return _lines_pdf([
+        "FACTURA", "Distribuciones Norte S.L.", "Calle Mayor 8, 28013 Madrid, España", "CIF: B12345678", "",
+        "Nº de factura: 2026/0881", "Fecha de emisión: 05/11/2026", "Fecha de vencimiento: 05/12/2026", "",
+        "Cliente: Example Retail Co", "",
+        "Concepto                            Cantidad    Precio unitario      Importe",
+        "Cajas de cartón                         200            1,50 €        300,00 €",
+        "Cinta adhesiva                           50            2,20 €        110,00 €",
+        "", "Base imponible: 410,00 €", "IVA (21%): 86,10 €", "Total factura: 496,10 €"])
+
+
+def blind3_nl() -> bytes:
+    return _lines_pdf([
+        "FACTUUR", "Van Dijk Techniek B.V.", "Keizersgracht 100, 1015 Amsterdam", "BTW-nummer: NL123456789B01", "",
+        "Factuurnummer: VD-7731", "Factuurdatum: 03-11-2026", "Vervaldatum: 03-12-2026", "",
+        "Omschrijving                         Aantal     Prijs         Bedrag",
+        "Onderhoud installatie                   4     € 95,00       € 380,00",
+        "Onderdelen                              1    € 142,50       € 142,50",
+        "", "Subtotaal: € 522,50", "BTW 21%: € 109,73", "Totaal: € 632,23"])
+
+
 BLIND = {
     "blind_uk_invoice.pdf": blind_uk_invoice,
     "blind_gst_hsn_summary.pdf": blind_gst_with_hsn_summary,
@@ -443,6 +494,9 @@ BLIND = {
     "blind2_small_business.pdf": blind2_small_business,
     "blind2_gst_line_tax.pdf": blind2_gst_line_tax,
     "blind2_consultant.pdf": blind2_consultant,
+    "blind3_fr.pdf": blind3_fr,
+    "blind3_es.pdf": blind3_es,
+    "blind3_nl.pdf": blind3_nl,
 }
 
 FILES = {

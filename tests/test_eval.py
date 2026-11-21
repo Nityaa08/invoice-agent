@@ -45,6 +45,17 @@ def test_blind2_eval_meets_the_labels():
     assert report["field_accuracy"] == 1.0
 
 
+def test_blind3_eval_meets_the_labels():
+    # First run on 2026-11-21, before any change: 0 of 3 read fully. The Spanish and Dutch
+    # invoices were not extracted at all, and the French one showed "Total HT" (before tax)
+    # as the total. All three still went to review. Now a regression set.
+    report = evaluate("blind3")
+    assert report["invoices"] == 3
+    assert report["decision_accuracy"] == 1.0
+    assert report["failed_rules_exact_match"] == 1.0
+    assert report["field_accuracy"] == 1.0
+
+
 def test_qa_eval_meets_the_labels():
     report = evaluate("qa")
     assert report["invoices"] == 10
