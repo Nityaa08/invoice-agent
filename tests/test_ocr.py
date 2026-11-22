@@ -117,3 +117,53 @@ def test_page_loads_the_pinned_ocr_library_with_sri_and_the_csp_allows_only_that
 
 def test_scanned_pdf_message_points_at_the_photo_path():
     assert "photo or screenshot" in ingest.SCANNED_PDF_MESSAGE and "does not run OCR" in ingest.SCANNED_PDF_MESSAGE
+
+
+# --- scanned PDFs: the server flags them, the page OCRs them in the browser ----------
+
+SCANNED = (ROOT / "tests" / "fixtures" / "pdfs" / "scanned_invoice.pdf").read_bytes()
+
+
+@pytest.mark.parametrize("client", ["demo", "full"])
+def test_a_scanned_pdf_is_flagged_so_the_page_can_ocr_it(request, client):
+    c = request.getfixturevalue(client)
+    path = "/api/demo/run" if client == "demo" else "/invoices"
+    run = c.post(path, files={"file": ("scan.pdf", SCANNED, "application/pdf")}).json()
+    assert run["scanned_pdf"] is True
+    assert run["ingest_error"] == ingest.SCANNED_PDF_MESSAGE and run["status"] == "needs_review"
+
+
+@pytest.mark.parametrize("name, data", [
+    ("ok.pdf", (ROOT / "tests" / "fixtures" / "pdfs" / "us_invoice.pdf").read_bytes()),  # text layer: read normally
+    ("bad.pdf", (ROOT / "tests" / "fixtures" / "pdfs" / "truncated.pdf").read_bytes()),  # damaged: OCR would not help
+    ("photo.ocr.txt", TEXT),
+])
+def test_only_scanned_pdfs_are_flagged(demo, name, data):
+    run = demo.post("/api/demo/run", files={"file": (name, data, "application/octet-stream")}).json()
+    assert run["scanned_pdf"] is False
+
+
+def test_page_ocrs_a_scanned_pdf_with_pinned_pdfjs_and_only_when_the_server_says_scanned():
+    html = (ROOT / "invoice_agent" / "web" / "index.html").read_text()
+    block = re.search(r"const PDFJS = \{(.*?)\};", html, re.S).group(1)
+    script = re.search(r'script: "([^"]+)"', block).group(1)
+    worker = re.search(r'worker: "([^"]+)"', block).group(1)
+    integrity = re.search(r'integrity: "([^"]+)"', block).group(1)
+    for url in (script, worker):
+        assert url.startswith(api.PDF_SCRIPT_SOURCE) and "@4.10.38/" in url  # pinned, and inside the CSP's folder
+    assert integrity.startswith("sha384-") and len(integrity) == 71
+    # PDFs cannot run JavaScript or eval in the reader, whatever they contain.
+    assert "isEvalSupported: false" in html and "enableScripting: false" in html
+    # Browser OCR runs only after the server reports a scanned PDF, and never on text it already OCR'd.
+    assert "it.run.scanned_pdf && it.input.file && !it.input.source" in html
+    # The OCR'd text goes back flagged as OCR, so a person always checks it.
+    ocr_fn = re.search(r"async function ocrScannedPdf\(it\) \{(.*?)\n\}", html, re.S).group(1)
+    assert 'source: "ocr"' in ocr_fn
+
+
+def test_csp_allows_the_pdfjs_folder_for_scripts_only(demo):
+    csp = demo.get("/").headers["content-security-policy"]
+    script_src = re.search(r"script-src ([^;]*);", csp).group(1)
+    connect_src = re.search(r"connect-src ([^;]*);", csp).group(1)
+    assert api.PDF_SCRIPT_SOURCE in script_src and api.PDF_SCRIPT_SOURCE not in connect_src
+    assert "worker-src blob:" in csp  # pdf.js starts its cross-origin worker from a blob: wrapper

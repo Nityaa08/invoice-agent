@@ -30,6 +30,7 @@ from langgraph.types import Command
 from .config import DATA_DIR, Settings
 from .extractors import Extractor, build_extractor
 from .graph import Deps, build_graph, validate_decision
+from .ingest import SCANNED_PDF_MESSAGE
 from .rules import GoodsReceipt, PurchaseOrder, ReceiptLine, normalize_id
 from .store import InvoiceStore
 from .vendors import VendorMatcher, check_new_vendor
@@ -236,6 +237,8 @@ class InvoiceService:
             "as_of": self.deps.today().isoformat(),
             "attempts": v.get("attempts", 0),
             "ingest_error": v.get("ingest_error"),
+            # A PDF with no text layer: the demo page reads it by OCR in the browser and sends the text again.
+            "scanned_pdf": v.get("ingest_error") == SCANNED_PDF_MESSAGE,
             "extraction_error": v.get("extraction_error"),
             "invoice": v.get("invoice"),
             "vendor_match": v.get("vendor_match"),

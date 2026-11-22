@@ -17,7 +17,7 @@
 | **13 validation rules** | Arithmetic, tax rate, plausibility, dates, currency, vendor match, tax id, duplicates, PO balance, **three-way match** (PO + goods receipt + invoice), lookalike characters, injected instructions | [`rules.py`](invoice_agent/rules.py) |
 | **Human in the loop** | Approve, reject, correct the fields (re-runs every rule), or **add the unknown vendor and re-check** | [`graph.py`](invoice_agent/graph.py), the page |
 | **Vendor onboarding** | "Add this vendor" from the review screen; refused if it would shadow a known vendor or borrow its tax id. SQLite in the full service, the browser's localStorage in the stateless demo | [`vendors.py`](invoice_agent/vendors.py) |
-| **OCR at zero server cost** | Photos are read in the visitor's browser with Tesseract.js (pinned, SRI, lazy-loaded); only the text is sent, and OCR'd invoices always go to a person | [`web/index.html`](invoice_agent/web/index.html) |
+| **OCR at zero server cost** | Photos and scanned PDFs are read in the visitor's browser (pdf.js draws the PDF pages, Tesseract.js reads them; pinned, SRI, lazy-loaded); only the text is sent, and OCR'd invoices always go to a person | [`web/index.html`](invoice_agent/web/index.html) |
 | **Batch + export** | Up to 20 files at once (or every sample), a queue with each status, CSV / JSON export with a formula-injection guard | the page, [`export.py`](invoice_agent/export.py) |
 | **MCP server** | `extract_invoice`, `validate_invoice`, `process_invoice`, `list_vendors`, `add_vendor` over stdio or streamable HTTP; no approve tool, by design | [`mcp_server.py`](invoice_agent/mcp_server.py) |
 | **Observability** | A timed timeline of every node in each run (shown on the page, `GET /api/runs/{id}/trace`), an audit log, JSON logs without document content, optional LangSmith | [`obs.py`](invoice_agent/obs.py) |
@@ -31,7 +31,7 @@
 flowchart LR
     subgraph Browser["Browser (demo page)"]
         UI["Queue, review screen,<br/>timeline, export"]
-        OCR["Tesseract.js OCR<br/>(photos, in the browser)"]
+        OCR["Tesseract.js OCR<br/>(photos and scanned PDFs, in the browser)"]
         LS[("localStorage<br/>added vendors")]
     end
     subgraph Clients["MCP clients"]
@@ -100,7 +100,7 @@ flowchart TD
 
 | Node | What it does | Code |
 |---|---|---|
-| `ingest` | PDF text via pypdf (layout mode keeps table columns apart); plain text as is. Photos are OCR'd in the browser and arrive as text flagged `source: ocr`; the server runs no OCR (unless `SERVER_OCR=true` locally). Scanned, damaged, password-protected and not-really-PDF files get a plain-language message and go to a human | [`ingest.py`](invoice_agent/ingest.py) |
+| `ingest` | PDF text via pypdf (layout mode keeps table columns apart); plain text as is. Photos and scanned PDFs are OCR'd in the browser and arrive as text flagged `source: ocr`; the server runs no OCR (unless `SERVER_OCR=true` locally). A scanned PDF sent to the API is answered with `scanned_pdf: true`, which is what tells the page to OCR it. Damaged, password-protected and not-really-PDF files get a plain-language message and go to a human | [`ingest.py`](invoice_agent/ingest.py) |
 | `extract` | Extractor output validated with `Invoice.model_validate`. On failure the exact error is fed back to the model and it retries once (the deterministic demo extractor is not retried); the reviewer sees the same failure in words ("could not find invoice date on the invoice") | [`graph.py`](invoice_agent/graph.py), [`extractors.py`](invoice_agent/extractors.py) |
 | `match_vendor` | Embeds the printed vendor name and returns the closest vendor-master entry and its cosine score | [`vendors.py`](invoice_agent/vendors.py) |
 | `validate` | Runs the thirteen rules; no short-circuit, so a reviewer sees every problem at once. If the extractor had to approximate something (for example it could not read the line-item table), that is added as a failed `extraction_is_complete` check; OCR text adds a failed `ocr_checked_by_person` check. Either way a human confirms it | [`rules.py`](invoice_agent/rules.py) |
@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 418 tests; seven labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 425 tests; seven labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -312,7 +312,7 @@ What happens when it cannot read something:
 
 - **A field is missing** (no invoice number, no date, no total): the invoice goes to review with "could not find invoice date on the invoice"; the page shows what it did read, and "Correct fields" pre-fills it.
 - **Line items cannot be read as a table** (a prose invoice, an unusual layout): one "Invoice total (line items not itemised)" line carries the subtotal, and the failed `extraction_is_complete` check sends it to review.
-- **A scanned PDF** (no text layer, or only a scanner watermark): "This PDF is a scanned image. The server reads PDFs with a text layer and does not run OCR. Upload a photo or screenshot of the page instead (the page reads images in your browser)." Nothing is extracted.
+- **A scanned PDF** (no text layer, or only a scanner watermark): the server cannot read it and answers with `scanned_pdf: true`. The page then draws the pages in the browser with pdf.js 4.10.38 (pinned, SRI-checked, scripts and eval in the PDF switched off), reads them with Tesseract.js and sends the text flagged `source: ocr`, so it goes to a person with page 1 shown next to the fields. Like the server, it reads the first pages and the last one (at most 3; a 5-page scan reads pages 1, 2 and 5) and says which pages it read. A 3-page scan took about 6 s on a laptop. If pdf.js cannot be downloaded, the server's message stays: "This PDF is a scanned image ... Upload a photo or screenshot of the page instead", plus why browser OCR did not run. API callers get that message and do their own OCR.
 - **A photo** (PNG, JPEG, WebP): the page OCRs it in the browser with Tesseract.js and sends the text flagged `source: ocr`. The demo extractor then reads that text like any other; the run always goes to a person ("read by OCR, please check"), with the photo shown next to the fields.
 - **Not a PDF, damaged, password-protected, empty, or over 4 MB**: a plain message; the page checks the size and type before uploading.
 
@@ -324,7 +324,7 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-418 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 418 passed locally on 3.13 on 2026-11-21.
+425 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 425 passed locally on 3.13 on 2026-11-22.
 
 | File | What it covers |
 |---|---|
@@ -426,7 +426,7 @@ The public demo runs in **demo mode**, because Vercel's Python functions keep no
 - `main.py` defines `app = FastAPI(...)` at the top level, which is what Vercel's FastAPI preset looks for. A test checks this.
 - Installed dependencies are about 140 MB, under the 500 MB function limit (the MCP SDK is a dev / optional dependency and is not deployed); `vercel.json` keeps tests, evals, scripts and docs out of the bundle and caps a request at 30 seconds (`maxDuration`).
 - **Cold start.** The read routes (`/`, `/api/config`, `/api/samples`, `/api/health`) import only FastAPI and the standard library; LangGraph, LangChain, numpy and pypdf load on the first POST. Importing `main` took about 0.21-0.26 s locally on 2026-11-17 (down from 0.57-0.73 s) and 0.24-0.27 s on 2026-11-18 with every new feature. The page, config and samples are sent with `s-maxage`, so Vercel's CDN answers them without starting the function (a new deploy clears the cache). A test checks that the read routes never import LangGraph.
-- Every response carries `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options` and a Content-Security-Policy; the page's one inline script is allowed by its SHA-256 hash, computed at startup, plus the two pinned Tesseract.js folders on jsDelivr.
+- Every response carries `X-Content-Type-Options`, `Referrer-Policy`, `X-Frame-Options` and a Content-Security-Policy; the page's one inline script is allowed by its SHA-256 hash, computed at startup, plus the two pinned Tesseract.js folders and pdf.js's pinned build folder on jsDelivr.
 
 Steps (only after the GitHub repo exists):
 
@@ -442,7 +442,7 @@ For the full service with persistence, run `uvicorn main:app` on any VM or conta
 
 - **The demo extractor reads common text-layer layouts, not every invoice.** On first, blind runs it fully read 1 of 3 unseen layouts (2026-11-16), 1 of 4 (2026-11-20; 41 of 44 fields) and 0 of 3 French, Spanish and Dutch invoices (2026-11-21) (see Eval). Its labels are English, German, French, Spanish and Dutch; what it cannot read goes to a human with the reason, it does not guess. Real invoices at volume need the model (`GROQ_API_KEY`). **The real-model path is tested with a faked HTTP response and has not been evaluated against a live model yet**; `--compare` is ready for that run.
 - **The eval sets are small and not truly held out** (see above). They show each path works; they do not measure extraction quality on real invoices.
-- **OCR is browser-only and English-only.** Photos are read by Tesseract.js in the visitor's browser (about 6 MB downloaded once; a few seconds per page on a laptop, slower on old phones). OCR misreads digits, so every OCR'd invoice goes to a person. Scanned PDFs are not OCR'd (that would need rendering the PDF in the browser first); the page asks for a photo or screenshot instead. The live CDN load was not tested from the build machine (see RT-32), only the same pinned files served locally.
+- **OCR is browser-only and English-only.** Photos are read by Tesseract.js in the visitor's browser (about 6 MB downloaded once; a few seconds per page on a laptop, slower on old phones). OCR misreads digits, so every OCR'd invoice goes to a person. Scanned PDFs are OCR'd the same way after pdf.js draws their pages, at most 3 pages per PDF (the first two and the last), so totals on a middle page of a long scan are missed and a person fills them in. The live CDN load was not tested from the build machine (see RT-32 and RT-37), only the same pinned files served locally.
 - **Vendor onboarding is immediate.** An added vendor is matched at once; a real AP team would have a second person approve vendor-master changes. In the demo, added vendors exist only in that visitor's browser.
 - **The three-way match pairs lines by shared words.** "Office chair, ergonomic" matches "Ergonomic office chair"; a receipt that describes items very differently from the invoice fails and goes to a person. Quantities already invoiced against a receipt are not tracked across invoices (the PO balance is).
 - **The MCP server has no authentication.** Over stdio it runs as the local user; over HTTP it binds to 127.0.0.1 and must stay there. With writes on, a client model can add a genuinely new vendor (RT-27); use `--read-only` where that matters.

@@ -371,9 +371,11 @@ def test_rt_page_csp_allows_exactly_its_own_inline_script(demo):
     assert len(scripts) == 1
     digest = base64.b64encode(hashlib.sha256(scripts[0].encode()).digest()).decode()
     script_src = re.search(r"script-src ([^;]*);", csp).group(1).split()
-    # Its own inline script by hash, the two pinned OCR package folders, WebAssembly; nothing else.
+    # Its own inline script by hash, the two pinned OCR package folders, pdf.js's pinned build folder
+    # (scanned PDFs), WebAssembly; nothing else.
     assert script_src == [f"'sha256-{digest}'", "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/",
-                          "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/", "'wasm-unsafe-eval'"]
+                          "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/",
+                          "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/", "'wasm-unsafe-eval'"]
     assert "unsafe-inline' https://fonts" in csp
     assert "'unsafe-eval'" not in csp and "'unsafe-inline'" not in re.search(r"script-src[^;]*", csp).group(0)
 

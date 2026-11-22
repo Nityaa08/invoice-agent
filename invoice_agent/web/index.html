@@ -225,7 +225,7 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
           Drop PDFs, text invoices or photos here (several at once), or click to choose
         </label>
         <div class="uperr" id="uperr" role="alert" aria-live="polite"></div>
-        <p class="hint" id="uphint">PDFs with a text layer (exported from accounting software, a browser or Word), or a photo: photos are read by OCR in your browser (Tesseract.js) and only the text is sent; OCR results always go to a person. Do not upload invoices with personal data to the public demo.</p>
+        <p class="hint" id="uphint">PDFs (exported from accounting software, a browser or Word, or scanned), or a photo: photos and scanned PDFs are read by OCR in your browser (pdf.js and Tesseract.js) and only the text is sent; OCR results always go to a person. Do not upload invoices with personal data to the public demo.</p>
       </section>
       <section class="card" id="queuecard" hidden>
         <h2>Queue</h2>
@@ -279,7 +279,7 @@ footer{border-top:1px solid var(--line);padding:22px 0 40px;color:var(--ink-3);f
 
 <script>
 const NODES = [
-  ["ingest", "file to text (pypdf; photos: OCR in the browser)"],
+  ["ingest", "file to text (pypdf; photos and scanned PDFs: OCR in the browser)"],
   ["extract", "LLM → Pydantic Invoice, retried once"],
   ["match_vendor", "closest vendor in the vector store"],
   ["validate", "pure-Python rules decide"],
@@ -375,7 +375,7 @@ function checkFile(f) {
 }
 
 // --- OCR in the browser ------------------------------------------------------------
-// Tesseract.js is loaded only when someone picks a photo: pinned versions, the main
+// Tesseract.js is loaded only when someone picks a photo or a scanned PDF: pinned versions, the main
 // script checked with Subresource Integrity, and the page's CSP allows exactly these
 // folders. The photo stays in the browser; the server gets the text, flagged as OCR,
 // and always sends it to a person.
@@ -399,15 +399,94 @@ function loadTesseract() {
   return tesseractLoading;
 }
 
-async function ocrImage(file, progress) {
+// Reads each image in turn with one Tesseract worker; the texts are joined page by page.
+async function ocrImages(images, progress) {
   progress("loading OCR (about 6 MB, once)");
   const T = await loadTesseract();
+  let page = 0;
+  const label = () => (images.length > 1 ? `OCR page ${page + 1} of ${images.length}` : "OCR");
   const worker = await T.createWorker("eng", 1, {
     workerPath: OCR.workerPath, corePath: OCR.corePath, langPath: OCR.langPath,
-    logger: (m) => { if (m.status === "recognizing text") progress(`OCR ${Math.round(m.progress * 100)}%`); },
+    logger: (m) => { if (m.status === "recognizing text") progress(`${label()} ${Math.round(m.progress * 100)}%`); },
   });
-  try { return (await worker.recognize(file)).data.text || ""; }
-  finally { worker.terminate(); }
+  try {
+    const texts = [];
+    for (page = 0; page < images.length; page++) texts.push((await worker.recognize(images[page])).data.text || "");
+    return texts.join("\n");
+  } finally { worker.terminate(); }
+}
+const ocrImage = (file, progress) => ocrImages([file], progress);
+
+// A scanned PDF has no text layer, so the server cannot read it. pdf.js draws its
+// pages in the browser (pinned, SRI-checked, scripts in PDFs off), and Tesseract
+// reads the drawings. Like the server, it reads the first pages and the last one,
+// where the totals are; OCR takes a few seconds a page, so at most SCAN_PAGES.
+const PDFJS = {
+  script: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs",
+  integrity: "sha384-+0ti2moQlmLN7WZHE2RHIf5lV8hHxhxEalN0il3YZceG26fUPyOkR0hp9daxk1i7",
+  worker: "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs",
+};
+const SCAN_PAGES = 3;
+const SCAN_WIDTH = 2000;  // pixels across a rendered page: enough for Tesseract, small enough for a phone
+let pdfjsLoading = null;
+function loadPdfjs() {
+  if (window.pdfjsLib && window.pdfjsLib.getDocument) return Promise.resolve(window.pdfjsLib);
+  if (!pdfjsLoading) pdfjsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.type = "module"; s.src = PDFJS.script; s.integrity = PDFJS.integrity; s.crossOrigin = "anonymous"; s.referrerPolicy = "no-referrer";
+    s.onload = () => {
+      const lib = window.pdfjsLib;
+      if (!lib || !lib.getDocument) return reject(new Error("the PDF reader did not start"));
+      lib.GlobalWorkerOptions.workerSrc = PDFJS.worker;
+      resolve(lib);
+    };
+    s.onerror = () => { pdfjsLoading = null; reject(new Error("the PDF reader could not be downloaded (offline, or blocked by the network)")); };
+    document.head.appendChild(s);
+  });
+  return pdfjsLoading;
+}
+
+function scanPageNumbers(total) {
+  if (total <= SCAN_PAGES) return Array.from({ length: total }, (_, i) => i + 1);
+  return [...Array.from({ length: SCAN_PAGES - 1 }, (_, i) => i + 1), total];
+}
+
+// Draws the chosen pages of a PDF as PNG blobs. Returns { pages: [Blob], read: [n], total }.
+async function renderPdfPages(file, progress) {
+  progress("loading the PDF reader (about 1.7 MB, once)");
+  const lib = await loadPdfjs();
+  const doc = await lib.getDocument({ data: new Uint8Array(await file.arrayBuffer()), isEvalSupported: false,
+                                      enableScripting: false, disableFontFace: true }).promise;
+  try {
+    const read = scanPageNumbers(doc.numPages), pages = [];
+    for (const n of read) {
+      progress(`drawing page ${n} of ${doc.numPages}`);
+      const page = await doc.getPage(n);
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: Math.min(4, SCAN_WIDTH / base.width) });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+      const ctx = canvas.getContext("2d");
+      ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: ctx, viewport }).promise;
+      pages.push(await new Promise((ok, bad) => canvas.toBlob((b) => (b ? ok(b) : bad(new Error("a page could not be drawn"))), "image/png")));
+      page.cleanup();
+    }
+    return { pages, read, total: doc.numPages };
+  } finally { doc.destroy(); }
+}
+
+// The server said "scanned": draw the pages, OCR them, and swap the PDF for the text, flagged as OCR.
+async function ocrScannedPdf(it) {
+  const f = it.input.file;
+  it.state = "ocr"; it.note = "scanned PDF"; renderQueue();
+  const progress = (msg) => { it.note = msg; renderQueue(); };
+  const { pages, read, total } = await renderPdfPages(f, progress);
+  const text = await ocrImages(pages, progress);
+  if (text.replace(/\W/g, "").length < 20) throw new Error("no readable text was found on its pages");
+  it.input = { file: new File([text], f.name.replace(/\.[^.]+$/, "") + ".ocr.txt", { type: "text/plain" }),
+               source: "ocr", image: URL.createObjectURL(pages[0]), photo: f.name, label: f.name,
+               scan: read.length < total ? `pages ${read.join(", ")} of ${total} were read` : null };
 }
 
 // --- the queue -----------------------------------------------------------------------
@@ -456,6 +535,16 @@ async function processItem(it) {
     }
     it.state = "running"; it.note = ""; renderQueue();
     it.run = await send(it, it.decisions);
+    if (it.run.scanned_pdf && it.input.file && !it.input.source) {
+      // The server's answer ("this PDF is a scanned image") stays if browser OCR fails.
+      try {
+        await ocrScannedPdf(it);
+        it.state = "running"; it.note = ""; renderQueue();
+        it.run = await send(it, it.decisions);
+      } catch (err) {
+        it.scanError = `The page also tried to read it by OCR in your browser, but ${err.message}.`;
+      }
+    }
     it.state = "done";
   } catch (err) {
     it.state = "error"; it.error = err.message;
@@ -744,14 +833,15 @@ function render(run, scroll) {
   }
   const draft = req && req.draft;
   if (run.invoice) html += `<pre>${esc(JSON.stringify(run.invoice, null, 2))}</pre>`;
-  else if (run.ingest_error) html += `<div class="notice"><b>Could not read this file</b>${esc(cap(run.ingest_error))}</div>`;
+  else if (run.ingest_error) html += `<div class="notice"><b>Could not read this file</b>${esc(cap(run.ingest_error))}${it && it.scanError ? `<br>${esc(it.scanError)}` : ""}</div>`;
   else {
     html += `<div class="notice warn"><b>Some fields could not be read</b>${esc(cap(run.extraction_error || "No invoice extracted."))}. Use “Correct fields…” to fill them in; the rules then run as normal.</div>`;
     if (draft) html += `<p class="hint">What the extractor did read:</p><pre>${esc(JSON.stringify(draft, null, 2))}</pre>`;
   }
   if (run.attempts > 1) html += `<p class="hint">Extraction took ${run.attempts} attempts; the schema error from the first was fed back to the second.</p>`;
   if (run.source === "ocr" && it && it.input.image) {
-    html += `<details open><summary>The photo (${esc(it.input.photo)}): check the fields against it</summary><img class="photo" alt="The uploaded photo" src="${esc(it.input.image)}"></details>`;
+    const what = /\.pdf$/i.test(it.input.photo) ? "The scanned PDF, page 1" : "The photo";
+    html += `<details open><summary>${what} (${esc(it.input.photo)}): check the fields against it${it.input.scan ? `; ${esc(it.input.scan)}` : ""}</summary><img class="photo" alt="${what}" src="${esc(it.input.image)}"></details>`;
   }
   if (run.text) html += `<details><summary>Text the ${run.source === "ocr" ? "OCR" : "extractor"} read</summary><pre>${esc(run.text)}</pre></details>`;
   if (run.audit && run.audit.length) html += `<details><summary>Audit log</summary><pre>${esc(run.audit.map((a) => `${a.at}  ${a.event}  ${JSON.stringify(Object.fromEntries(Object.entries(a).filter(([k]) => !["at","event"].includes(k))))}`).join("\n"))}</pre></details>`;

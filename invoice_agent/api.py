@@ -94,6 +94,10 @@ OCR_SCRIPT_SOURCES = (
     "https://cdn.jsdelivr.net/npm/tesseract.js@7.0.0/",
     "https://cdn.jsdelivr.net/npm/tesseract.js-core@7.0.0/",
 )
+# pdf.js draws the pages of a scanned PDF so Tesseract can read them: the main
+# module (SRI-checked by the page) and its worker, which pdf.js starts from a
+# blob: wrapper that imports the pinned file.
+PDF_SCRIPT_SOURCE = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/"
 OCR_DATA_SOURCE = "https://cdn.jsdelivr.net/npm/@tesseract.js-data/eng@1.0.0/"
 
 
@@ -106,7 +110,7 @@ def page_csp() -> str:
         for m in re.findall(r"<script>(.*?)</script>", html, re.S))
     ocr = " ".join(OCR_SCRIPT_SOURCES)
     return ("default-src 'none'; "
-            f"script-src {hashes} {ocr} 'wasm-unsafe-eval'; worker-src blob:; "
+            f"script-src {hashes} {ocr} {PDF_SCRIPT_SOURCE} 'wasm-unsafe-eval'; worker-src blob:; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; img-src 'self' data: blob:; "
             f"connect-src 'self' {ocr} {OCR_DATA_SOURCE}; "
