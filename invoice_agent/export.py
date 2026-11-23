@@ -20,7 +20,7 @@ from .store import APPROVED_STATUSES
 
 COLUMNS = (
     "file", "run_id", "status", "decision", "source", "vendor_name", "vendor_id", "vendor_match_score",
-    "invoice_number", "invoice_date", "due_date", "currency", "po_number", "subtotal", "discount", "tax", "total",
+    "invoice_number", "invoice_date", "due_date", "currency", "po_number", "subtotal", "discount", "tax", "rounding", "total",
     "failed_rules", "reviewer_action", "reviewer", "review_note",
 )
 _FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
@@ -50,6 +50,7 @@ def export_row(run: dict[str, Any]) -> dict[str, Any]:
         "subtotal": inv.get("subtotal"),
         "discount": inv.get("discount"),
         "tax": inv.get("tax"),
+        "rounding": inv.get("rounding"),
         "total": inv.get("total"),
         "failed_rules": "; ".join(failed) or ("" if run.get("invoice") else "extraction_failed"),
         "reviewer_action": decision.get("action"),

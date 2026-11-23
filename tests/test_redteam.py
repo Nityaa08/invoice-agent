@@ -490,3 +490,19 @@ def test_rt_encrypted_pdf_asks_for_the_password_to_be_removed():
     writer.write(buf)
     with pytest.raises(ingest.IngestError, match="password-protected"):
         ingest.to_text("locked.pdf", buf.getvalue())
+
+
+def test_rt_a_round_off_line_cannot_hide_a_real_adjustment():
+    # "Round Off" is a harmless-looking label: an attacker could put 500 under it
+    # to make a padded total add up. Rounding is always under one unit.
+    padded = invoice(rounding=500.0, total=71300.0)
+    r = result("subtotal_plus_tax_equals_total", padded)
+    assert not r.passed and "is not rounding" in r.detail
+    assert not result("subtotal_plus_tax_equals_total", invoice(rounding=-1.0, total=70799.0)).passed
+    ok = invoice(rounding=-0.4, total=70799.6)
+    assert result("subtotal_plus_tax_equals_total", ok).passed
+
+
+def test_rt_a_round_off_must_still_add_up():
+    # A real round-off line does not excuse a total that is wrong by more.
+    assert not result("subtotal_plus_tax_equals_total", invoice(rounding=-0.4, total=70790.0)).passed

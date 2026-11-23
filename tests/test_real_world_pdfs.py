@@ -291,3 +291,38 @@ def test_missing_fields_reach_the_reviewer_in_words(demo):
 def test_fixtures_stay_small():
     for f in FIXTURES.glob("*.pdf"):
         assert f.stat().st_size < 60 * 1024, f.name
+
+
+# --- round-off lines (Tally prints one on most invoices) --------------------------
+
+
+def test_round_off_invoice_from_a_known_vendor_is_auto_approved(demo):
+    # Before 2026-11-23 the round-off line was ignored, so this correct invoice
+    # failed subtotal + tax = total by 0.40 and always went to a person.
+    run = upload(demo, "gst_round_off.pdf", pdf("gst_round_off.pdf")).json()
+    assert run["invoice"]["rounding"] == -0.4
+    assert run["status"] == "auto_approved"
+    detail = next(r["detail"] for r in run["rules"] if r["name"] == "subtotal_plus_tax_equals_total")
+    assert "- round-off 0.40 = 17322.00" in detail
+
+
+@pytest.mark.parametrize("line, expected", [
+    ("Round Off                     (-)0.40", -0.4),
+    ("Rounded Off                     0.35", 0.35),
+    ("Rounding Off                   -0.25", -0.25),
+    ("Less: Round Off                 0.30", -0.3),
+    ("Round off                      (0.45)", -0.45),
+])
+def test_round_off_line_is_read_with_its_sign(line, expected):
+    text = "\n".join([
+        "TAX INVOICE", "Northwind Office Supplies Pvt Ltd", "Invoice No.: NW-1  Dated: 12-Nov-2026",
+        "Description                 Quantity     Rate        Amount",
+        "Copier paper                      10   100.00      1,000.00",
+        "Taxable Value                                     1,000.00",
+        "IGST @ 18%                                          180.00",
+        line,
+        "Total                                    ₹ " + f"{1180 + expected:,.2f}",
+    ])
+    out = DemoExtractor().extract(text)
+    assert out["rounding"] == expected
+    assert out["total"] == round(1180 + expected, 2)

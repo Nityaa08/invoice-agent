@@ -22,7 +22,7 @@ def test_field_comparison():
 
 def test_realworld_eval_meets_the_labels():
     report = evaluate("realworld")
-    assert report["invoices"] == 7
+    assert report["invoices"] == 8
     assert report["decision_accuracy"] == 1.0
     assert report["failed_rules_exact_match"] == 1.0
     assert report["field_accuracy"] == 1.0

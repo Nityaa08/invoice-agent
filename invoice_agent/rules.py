@@ -21,6 +21,9 @@ from .textguard import fold, instructions, lookalikes
 # Rounding allowed when comparing printed amounts (one cent / one paisa per
 # comparison, plus a little for per-line rounding on long invoices).
 MONEY_TOLERANCE = Decimal("0.02")
+# A printed round-off ("Round Off (-)0.30") brings the total to a whole rupee,
+# euro or dollar, so it is always under one unit. A bigger one is not rounding.
+MAX_ROUNDING = Decimal("1.00")
 # Invoices older than this are suspicious (stale or a re-sent old bill).
 MAX_INVOICE_AGE_DAYS = 365
 # Payment terms longer than this are unusual enough for a human to look.
@@ -157,19 +160,21 @@ def line_items_sum_to_subtotal(invoice: Invoice, ctx: RuleContext) -> RuleResult
 
 
 def subtotal_plus_tax_equals_total(invoice: Invoice, ctx: RuleContext) -> RuleResult:
-    discount = money(invoice.discount)
-    expected = money(invoice.subtotal) - discount + money(invoice.tax)
+    name = "subtotal_plus_tax_equals_total"
+    discount, rounding = money(invoice.discount), money(invoice.rounding)
+    if abs(rounding) >= MAX_ROUNDING:
+        # Rounding moves the total to the nearest unit; anything bigger is an
+        # unexplained adjustment hiding under a harmless label.
+        return RuleResult(name, False, f"a round-off of {rounding} is not rounding: it should be less than "
+                                       f"{MAX_ROUNDING} either way")
+    expected = money(invoice.subtotal) - discount + money(invoice.tax) + rounding
     less = f" - discount {discount}" if discount else ""
+    rounded = f" {'+' if rounding > 0 else '-'} round-off {abs(rounding)}" if rounding else ""
+    sums = f"subtotal {money(invoice.subtotal)}{less} + tax {money(invoice.tax)}{rounded} = {expected}"
     diff = money(invoice.total) - expected
     if abs(diff) > MONEY_TOLERANCE:
-        return RuleResult(
-            "subtotal_plus_tax_equals_total",
-            False,
-            f"subtotal {money(invoice.subtotal)}{less} + tax {money(invoice.tax)} = {expected}, "
-            f"but the total says {money(invoice.total)} (off by {diff})",
-        )
-    return RuleResult("subtotal_plus_tax_equals_total", True,
-                      f"subtotal {money(invoice.subtotal)}{less} + tax {money(invoice.tax)} = {expected}, matches the total")
+        return RuleResult(name, False, f"{sums}, but the total says {money(invoice.total)} (off by {diff})")
+    return RuleResult(name, True, f"{sums}, matches the total")
 
 
 def _taxable(invoice: Invoice) -> Decimal:

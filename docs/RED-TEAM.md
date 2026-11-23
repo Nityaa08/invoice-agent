@@ -49,6 +49,7 @@ The design principle under test: **the model reads; tested code decides.** An at
 | RT-35 | Low | New endpoints without rate limits | Fixed before release |
 | RT-36 | Medium | Prompt injection not flagged on the first review when extraction is incomplete | Fixed (2026-11-19) |
 | RT-37 | Medium | pdf.js from a CDN for scanned PDFs: supply chain, and a hostile PDF in the visitor's browser | Mitigated (pinned 4.10.38, SRI, path-scoped CSP, eval and PDF scripts off); residual risk documented |
+| RT-38 | Low | A new "Round Off" field used to hide a real adjustment in a padded total | Not vulnerable (round-off must be under 1.00; tested) |
 
 ## Findings
 
@@ -305,6 +306,10 @@ Scanned PDFs used to stop at "this PDF is a scanned image, upload a photo instea
 - **A hostile PDF:** the file is the visitor's own and is drawn only in their browser, but a PDF can still try to run code in the reader. 4.10.38 is after the fix for CVE-2024-4367 (font code run through `eval`, fixed in 4.2.67); the page also passes `isEvalSupported: false` and `enableScripting: false`, and the page's CSP has no `'unsafe-eval'`, so neither path can run.
 - **Failure:** if pdf.js cannot be downloaded or the pages hold no readable text, the server's scanned-PDF message stays and the page adds why OCR did not run; nothing is guessed.
 - **Checked in a browser** (local, CDN URLs served from the npm copies, CSP enforced): `scanned_invoice.pdf` was read (vendor, number, date, subtotal, tax and total) and went to review for the missing currency; a 5-page image-only PDF read pages 1, 2 and 5 in 6.4 s and showed which pages were read; with pdf.js blocked, the run kept the scanned-PDF message plus "the PDF reader could not be downloaded". *Tests: `test_ocr.py::test_a_scanned_pdf_is_flagged_so_the_page_can_ocr_it`, `test_only_scanned_pdfs_are_flagged`, `test_page_ocrs_a_scanned_pdf_with_pinned_pdfjs_and_only_when_the_server_says_scanned`, `test_csp_allows_the_pdfjs_folder_for_scripts_only`.*
+
+### RT-38 · Low · Round-off lines (2026-11-23)
+
+Tally and most Indian billing software print "Round Off (-)0.40" between the tax and the total. The demo ignored that line, so a correct invoice failed `subtotal_plus_tax_equals_total` by the round-off and could never be auto-approved. The schema now has a signed `rounding` field (read from Round Off / Rounded Off / Rounding / "Less: Round Off", with Tally's `(-)` sign) and the rule adds it. Because the label looks harmless, an attacker could print "Round Off 500.00" to make a padded total add up, so the rule fails any round-off of 1.00 or more ("a round-off of 500.00 is not rounding") and a round-off never excuses a total that is wrong by more. *Tests: `test_redteam.py::test_rt_a_round_off_line_cannot_hide_a_real_adjustment`, `test_rt_a_round_off_must_still_add_up`, `test_real_world_pdfs.py::test_round_off_invoice_from_a_known_vendor_is_auto_approved`, `test_round_off_line_is_read_with_its_sign`.*
 
 ## Reliability notes from the same pass
 

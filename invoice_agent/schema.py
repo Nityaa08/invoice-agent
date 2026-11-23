@@ -61,7 +61,11 @@ class Invoice(BaseModel):
         description="Total tax rate in percent as printed (CGST 9% + SGST 9% = 18), or null if not printed",
     )
     tax: float = Field(ge=0, le=MAX_NUMBER, description="Total tax (GST, VAT or sales tax)")
-    total: float = Field(ge=0, le=MAX_NUMBER, description="Amount payable: subtotal - discount + tax")
+    rounding: float = Field(
+        default=0, ge=-MAX_NUMBER, le=MAX_NUMBER,
+        description="Round-off line printed before the total (Round Off -0.30), negative when it lowers the total; 0 if none",
+    )
+    total: float = Field(ge=0, le=MAX_NUMBER, description="Amount payable: subtotal - discount + tax + rounding")
 
     @field_validator("currency")
     @classmethod

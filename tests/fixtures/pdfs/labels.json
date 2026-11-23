@@ -81,6 +81,18 @@
       "failed_rules": [],
       "extraction_fails": true,
       "expected": {}
+    },
+    {
+      "file": "gst_round_off.pdf",
+      "title": "Tally-style GST invoice from a known vendor, total rounded to the rupee by \"Round Off (-)0.40\" (added 2026-11-23)",
+      "decision": "auto_approve",
+      "failed_rules": [],
+      "expected": {
+        "vendor_name": "Northwind Office Supplies Pvt Ltd", "vendor_tax_id": "29ABCDE1234F1Z5",
+        "invoice_number": "NW/2026-27/0412", "invoice_date": "2026-11-12", "due_date": null,
+        "currency": "INR", "po_number": "PO-7781", "line_count": 2,
+        "subtotal": 14680.0, "tax": 2642.4, "rounding": -0.4, "total": 17322.0
+      }
     }
   ]
 }

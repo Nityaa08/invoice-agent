@@ -640,7 +640,7 @@ function showCurrent(scroll) {
 // --- export ----------------------------------------------------------------------------
 // The same columns as GET /api/runs/export in the full service (invoice_agent/export.py).
 const EXPORT_COLUMNS = ["file", "run_id", "status", "decision", "source", "vendor_name", "vendor_id", "vendor_match_score",
-  "invoice_number", "invoice_date", "due_date", "currency", "po_number", "subtotal", "discount", "tax", "total",
+  "invoice_number", "invoice_date", "due_date", "currency", "po_number", "subtotal", "discount", "tax", "rounding", "total",
   "failed_rules", "reviewer_action", "reviewer", "review_note"];
 const APPROVED = ["auto_approved", "approved_by_reviewer", "approved_after_correction", "approved_after_recheck"];
 
@@ -652,7 +652,8 @@ function exportRow(run) {
     source: run.source || "upload", vendor_name: inv.vendor_name ?? null, vendor_id: vm.matched ? vm.vendor_id : null,
     vendor_match_score: vm.score ?? null, invoice_number: inv.invoice_number ?? null, invoice_date: inv.invoice_date ?? null,
     due_date: inv.due_date ?? null, currency: inv.currency ?? null, po_number: inv.po_number ?? null,
-    subtotal: inv.subtotal ?? null, discount: inv.discount ?? null, tax: inv.tax ?? null, total: inv.total ?? null,
+    subtotal: inv.subtotal ?? null, discount: inv.discount ?? null, tax: inv.tax ?? null, rounding: inv.rounding ?? null,
+    total: inv.total ?? null,
     failed_rules: (run.rules || []).filter((r) => !r.passed).map((r) => r.name).join("; ") || (run.invoice ? "" : "extraction_failed"),
     reviewer_action: d.action || null, reviewer: d.reviewer || null, review_note: d.note || null,
   };
@@ -887,7 +888,7 @@ function cap(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slic
 function blankInvoice() {
   return { vendor_name: "", vendor_tax_id: null, invoice_number: "", invoice_date: "", due_date: null, currency: "",
     po_number: null, line_items: [{ description: "", quantity: 1, unit_price: 0, amount: 0 }], subtotal: 0, discount: 0,
-    tax_rate: null, tax: 0, total: 0 };
+    tax_rate: null, tax: 0, rounding: 0, total: 0 };
 }
 
 async function addVendor(base) {
