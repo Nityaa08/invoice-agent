@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 440 tests; seven labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 442 tests; seven labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -324,7 +324,7 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-440 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 440 passed locally on 3.13 on 2026-11-24.
+442 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 442 passed locally on 3.13 on 2026-11-24.
 
 | File | What it covers |
 |---|---|
@@ -342,7 +342,7 @@ python -m pytest
 | `test_vendors.py` (15) | Embedder determinism, store contract, name variants matched, unknown names below threshold |
 | `test_extract_ingest.py` (35) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor (incl. French, Spanish and Dutch labels), ingest errors |
 | `test_llm_extractor.py` (5) | The real LangChain `ChatOpenAI` path with the HTTP call faked: the schema is sent as `response_format`, answers are parsed, schema and HTTP errors are handled, feedback reaches the model |
-| `test_real_world_pdfs.py` (68) | Uploads through `/api/demo/run` with Vercel's settings: GST (including a Tally round-off line and a total that wrapped in a narrow column), IGST, US, EU and multi-page invoices, prose, scans, broken and wrong-type files, label synonyms, number and date formats, `EXTRACTOR=llm` reading an upload |
+| `test_real_world_pdfs.py` (70) | Uploads through `/api/demo/run` with Vercel's settings: GST (including a Tally round-off line, a total that wrapped in a narrow column and descriptions that wrap), IGST, US, EU and multi-page invoices, prose, scans, broken and wrong-type files, label synonyms, number and date formats, `EXTRACTOR=llm` reading an upload |
 | `test_redteam.py` (98) | One test per finding of the first red-team round in [`docs/RED-TEAM.md`](docs/RED-TEAM.md) (the second round's tests live in the feature files above) |
 | `test_store.py` (4), `test_eval.py` (8) | Store idempotency and ledger; the eval on all seven sets runs in CI |
 

@@ -575,6 +575,8 @@ class DemoExtractor:
         if header_at is None:
             return None, []
         items = []
+        desc_at = None  # where the last item's description starts on its line
+        before_first: list[tuple[int, str]] = []  # lone text lines above the first row
         for line in lines[header_at + 1:]:
             cells = _cells(line)
             if not cells:
@@ -583,7 +585,31 @@ class DemoExtractor:
                 break
             row = _parse_amount_row(line, dc) if amounts_only else _parse_row(line, dc)
             if row:
+                desc_at = next((s for s, _, c in cells if c.strip() == row["description"]), None)
+                if not items and desc_at is not None:
+                    # A vertically centred cell puts the first words above the numbers.
+                    above = [t for s, t in before_first if abs(s - desc_at) <= 2]
+                    if above and len(above) == len(before_first):
+                        row["description"] = " ".join(above + [row["description"]])
                 items.append(row)
+                continue
+            text_only = (len(cells) == 1 and re.search(r"[A-Za-z]{2}", cells[0][2])
+                         and not _any_label(cells[0][2]) and _total_kind(cells[0][2]) is None)
+            if not items:
+                if text_only and _TABLE_HEADER.search(cells[0][2]) and len(cells[0][2].split()) <= 3:
+                    continue  # the header's own second line: "Item &" / "Description"
+                if text_only and len(before_first) < 3:
+                    before_first.append((cells[0][0], cells[0][2].strip()))
+                else:
+                    before_first = []
+                continue
+            # A description too long for its column wraps: "Whiteboard markers, pack"
+            # then "of 4" alone on the next line, in the same column.
+            if (text_only and desc_at is not None and abs(cells[0][0] - desc_at) <= 2
+                    and len(items[-1]["description"]) < 200):
+                items[-1]["description"] = f'{items[-1]["description"]} {cells[0][2].strip()}'
+                continue
+            desc_at = None
         return header_at, items
 
     @staticmethod

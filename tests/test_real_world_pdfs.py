@@ -371,3 +371,33 @@ def test_a_quantity_total_alone_is_never_the_invoice_total():
         "Amount Chargeable (in words): INR One Thousand Only",
     ])
     assert DemoExtractor().extract(text).get("total") != 15.0
+
+
+# --- line-item descriptions that wrap in their column ---------------------------
+
+
+def test_wrapped_descriptions_are_joined():
+    # Before 2026-11-24 only the line holding the numbers was kept:
+    # "Whiteboard markers, pack" lost "of 4".
+    text = "\n".join([
+        "TAX INVOICE", "Northwind Office Supplies Pvt Ltd", "Invoice No.: NW-1  Dated: 12-Nov-2026",
+        "Sl   Item &                      Quantity     Rate        Amount",
+        "     Description",
+        "1    Whiteboard markers, pack          10   100.00      1,000.00",
+        "     of 4",
+        "2    Copier paper                      2    50.00        100.00",
+        "Page 1 of 1",
+        "Taxable Value                                     1,100.00",
+        "IGST @ 18%                                          198.00",
+        "Total                                    ₹ 1,298.00",
+    ])
+    items = DemoExtractor().extract(text)["line_items"]
+    assert [i["description"] for i in items] == ["Whiteboard markers, pack of 4", "Copier paper"]
+
+
+def test_vertically_centred_description_keeps_the_words_above_its_numbers():
+    # Zoho-style rows centre the text: "Cloud" sits above the numbers line and
+    # "November" below it. Before, the first item read "hosting -".
+    text = to_text("blind2_gst_line_tax.pdf", pdf("blind2_gst_line_tax.pdf"))
+    items = DemoExtractor().extract(text)["line_items"]
+    assert [i["description"] for i in items] == ["Cloud hosting - November", "Managed backups"]
