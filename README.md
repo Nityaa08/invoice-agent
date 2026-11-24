@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 434 tests; seven labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 440 tests; seven labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -324,7 +324,7 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-434 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 434 passed locally on 3.13 on 2026-11-23.
+440 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 440 passed locally on 3.13 on 2026-11-24.
 
 | File | What it covers |
 |---|---|
@@ -342,7 +342,7 @@ python -m pytest
 | `test_vendors.py` (15) | Embedder determinism, store contract, name variants matched, unknown names below threshold |
 | `test_extract_ingest.py` (35) | Amount and date parsing (1,234.56 and 1.234,56), PDF text, demo extractor (incl. French, Spanish and Dutch labels), ingest errors |
 | `test_llm_extractor.py` (5) | The real LangChain `ChatOpenAI` path with the HTTP call faked: the schema is sent as `response_format`, answers are parsed, schema and HTTP errors are handled, feedback reaches the model |
-| `test_real_world_pdfs.py` (62) | Uploads through `/api/demo/run` with Vercel's settings: GST (including a Tally round-off line), IGST, US, EU and multi-page invoices, prose, scans, broken and wrong-type files, label synonyms, number and date formats, `EXTRACTOR=llm` reading an upload |
+| `test_real_world_pdfs.py` (68) | Uploads through `/api/demo/run` with Vercel's settings: GST (including a Tally round-off line and a total that wrapped in a narrow column), IGST, US, EU and multi-page invoices, prose, scans, broken and wrong-type files, label synonyms, number and date formats, `EXTRACTOR=llm` reading an upload |
 | `test_redteam.py` (98) | One test per finding of the first red-team round in [`docs/RED-TEAM.md`](docs/RED-TEAM.md) (the second round's tests live in the feature files above) |
 | `test_store.py` (4), `test_eval.py` (8) | Store idempotency and ledger; the eval on all seven sets runs in CI |
 
@@ -379,7 +379,7 @@ On 2026-11-18 every set was re-run after the new rule: samples, real-world-style
 
 **Read these numbers honestly.** The demo extractor was written against these same invoices, so 100% field accuracy shows the pipeline is wired correctly, not that it reads invoices well. The decision numbers mean more: given the extracted fields, the rules and the graph send every invoice down the right path. The missing-number invoice is excluded from field accuracy (there is no invoice to score) and counted in decision accuracy.
 
-**Real-world-style PDFs** ([`tests/fixtures/pdfs/`](tests/fixtures/pdfs/), made by [`scripts/make_test_pdfs.py`](scripts/make_test_pdfs.py), labels in `labels.json`). On 2026-11-16 the original demo extractor read **none** of the six text-layer invoices: every one stopped with the schema error and no invoice. After the fixes it reads all six (100% of 66 fields) and sends the scan to review with the scan message; all seven go to review, correctly, because none of the made-up vendors is in the vendor master. An eighth, added on 2026-11-23, is a Tally-style invoice from a known vendor with a "Round Off (-)0.40" line: before the fix the round-off was ignored, so this correct invoice failed its arithmetic by 0.40 and always went to a person; it is now read and auto-approved (100% of 77 fields over the seven text-layer invoices). These PDFs were written while fixing the extractor, so they are a regression set, not a measure of accuracy on unseen invoices.
+**Real-world-style PDFs** ([`tests/fixtures/pdfs/`](tests/fixtures/pdfs/), made by [`scripts/make_test_pdfs.py`](scripts/make_test_pdfs.py), labels in `labels.json`). On 2026-11-16 the original demo extractor read **none** of the six text-layer invoices: every one stopped with the schema error and no invoice. After the fixes it reads all six (100% of 66 fields) and sends the scan to review with the scan message; all seven go to review, correctly, because none of the made-up vendors is in the vendor master. An eighth, added on 2026-11-23, is a Tally-style invoice from a known vendor with a "Round Off (-)0.40" line: before the fix the round-off was ignored, so this correct invoice failed its arithmetic by 0.40 and always went to a person; it is now read and auto-approved (100% of 77 fields over the seven text-layer invoices). A ninth, `gst_wrapped_total.pdf` (2026-11-24), is a test fixture only, not part of this labelled set: its amount column is too narrow, so the total prints as "Total 15 Nos ₹" with "4,071.00" on the line below, and the demo used to read the quantity total (15.00) as the invoice total. A quantity with a unit ("15 Nos", "24 Pcs", "3.5 Hrs") is now never taken as an amount, and a total that wrapped is read from the line below. These PDFs were written while fixing the extractor, so they are a regression set, not a measure of accuracy on unseen invoices.
 
 **Blind set** (`blind_labels.json`). Three more PDFs (a UK, a Canadian and a GST invoice with an HSN tax summary) were written after the extractor was frozen and run once, unchanged: 1 of 3 read fully (with the wrong vendor name, 10 of 11 fields); the other two went to review because the invoice number or date was not found. Nothing was approved wrongly. The misses were then fixed, so this set is now a regression set too (100%). That first run is the honest number for unseen layouts: the demo extractor fails safe, but it misses often. A real model and a larger, truly held-out set of real invoices are the next step.
 

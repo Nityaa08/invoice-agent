@@ -308,9 +308,33 @@ def _total_kind(cell: str) -> str | None:
     return None
 
 
+# "15 Nos", "24 Pcs", "3.5 Hrs": the quantity column's total, printed on the
+# same line as "Total". It is a count, not money, so it is never the amount.
+_QTY_CELL = re.compile(
+    r"^\d[\d,.]*\s*(?:nos?|pcs?|pieces?|units?|qty|kgs?|gms?|ltrs?|litres?|liters?|mtrs?|metres?|meters?|"
+    r"hrs?|hours?|days?|boxes|box|bags?|sets?|pairs?|packs?|items?|each|ea|doz(?:en)?|rolls?|reams?)\.?$", re.I)
+
+
 def _amount_after(line: str, cell_end: int, decimal_comma: bool) -> float | None:
-    nums = _numbers(line[cell_end:], decimal_comma)
+    rest = " ".join(c for _, _, c in _cells(line[cell_end:]) if not _QTY_CELL.match(c.strip()))
+    nums = _numbers(rest, decimal_comma)
     return nums[-1] if nums else None
+
+
+def _amount_below(lines: list[str], i: int, cell_end: int, decimal_comma: bool) -> float | None:
+    """A totals amount that wrapped onto the next line of a narrow column.
+
+    "Total      15 Nos      ₹" then "4,997.00" under the amount column: the
+    next non-empty line holds a single number, to the right of the label.
+    """
+    for line in lines[i + 1:i + 3]:
+        cells = _cells(line)
+        if not cells:
+            continue
+        if len(cells) == 1 and cells[0][0] >= cell_end and _NUMERIC_CELL.match(cells[0][2].strip()):
+            return parse_amount(cells[0][2].strip(), decimal_comma)
+        return None
+    return None
 
 
 # --- line items --------------------------------------------------------------
@@ -566,7 +590,7 @@ class DemoExtractor:
     def _totals(lines: list[str], dc: bool) -> dict[str, Any]:
         """The first subtotal, tax, total and amount-due lines, wherever they sit on the line."""
         found: dict[str, Any] = {"tax_parts": {}, "tax_rates": {}}
-        for line in lines:
+        for i, line in enumerate(lines):
             for _, end, cell in _cells(line):
                 kind = _total_kind(cell)
                 if kind is None:
@@ -578,6 +602,8 @@ class DemoExtractor:
                     # "Grand Total ₹ 1,234" in one cell
                     nums = _numbers(cell, dc)
                     amount = nums[-1] if nums else None
+                if amount is None:
+                    amount = _amount_below(lines, i, end, dc)
                 if amount is None:
                     continue
                 if kind == "rounding" and re.match(r"less\b", cell.strip(), re.I):

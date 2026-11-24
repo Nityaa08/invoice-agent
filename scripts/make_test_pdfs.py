@@ -25,7 +25,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
-from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "tests" / "fixtures" / "pdfs"
@@ -142,6 +142,54 @@ def gst_round_off() -> bytes:
         Spacer(1, 3 * mm),
         p("Amount Chargeable (in words): INR Seventeen Thousand Three Hundred Twenty Two Only"),
         p("E. &amp; O.E"),
+        p("for Northwind Office Supplies Pvt Ltd &nbsp; Authorised Signatory"),
+    ])
+    return buf.getvalue()
+
+
+def gst_wrapped_total() -> bytes:
+    """Tally-style GST invoice whose amount column is too narrow for the total.
+
+    Added 2026-11-24 after the live-demo check: "₹ 4,071.00" wrapped, leaving
+    "Total   15 Nos   ₹" on one line and "4,071.00" under it, and the demo read
+    the quantity total (15) as the invoice total.
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=12 * mm)
+    ss = _styles()
+    p = lambda t, s="Normal": Paragraph(t, ss[s])  # noqa: E731
+    seller = p("<b>Northwind Office Supplies Pvt Ltd</b><br/>14 Residency Road, Bengaluru 560025<br/>"
+               "GSTIN/UIN: 29ABCDE1234F1Z5<br/>State Name: Karnataka, Code: 29")
+    meta = Table([
+        ["Invoice No.", "Dated"],
+        ["NW/2026-27/0450", "16-Nov-2026"],
+        ["Delivery Note", "Mode/Terms of Payment"],
+        ["DN-0118", "30 days"],
+    ], colWidths=[42 * mm, 43 * mm], style=TableStyle([
+        ("FONT", (0, 0), (-1, -1), FONT, 8), ("BOX", (0, 0), (0, 1), 0.5, colors.grey),
+        ("BOX", (1, 0), (1, 1), 0.5, colors.grey), ("BOX", (0, 2), (0, 3), 0.5, colors.grey),
+        ("BOX", (1, 2), (1, 3), 0.5, colors.grey)]))
+    head = Table([[seller, meta]], colWidths=[95 * mm, 87 * mm])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, colors.grey)]))
+    buyer = p("<b>Buyer (Bill to)</b><br/>Example Retail Co<br/>5 Lake View Road, Bengaluru 560001<br/>"
+              "GSTIN/UIN: 29AABCE9876K1Z2")
+    cell = ParagraphStyle("amt", fontName=FONT_BOLD, fontSize=8, leading=10, alignment=2)
+    rows = [
+        ["Sl No.", "Description of Goods", "HSN/SAC", "Quantity", "Rate", "per", "Amount"],
+        ["1", "A4 copier paper, 500 sheets", "4802", "10 Nos", "265.00", "Nos", "2,650.00"],
+        ["2", "Whiteboard markers, pack of 4", "9608", "5 Nos", "160.00", "Nos", "800.00"],
+        ["", "", "", "", "", "Taxable Value", "3,450.00"],
+        ["", "CGST @ 9%", "", "", "", "", "310.50"],
+        ["", "SGST @ 9%", "", "", "", "", "310.50"],
+        # The amount wraps where a space lets it: the rupee sign stays on the
+        # Total line and the figure drops below it.
+        ["", "Total", "", "15 Nos", "", "", Paragraph("₹<br/>4,071.00", cell)],
+    ]
+    table = Table(rows, colWidths=[12 * mm, 58 * mm, 20 * mm, 20 * mm, 22 * mm, 22 * mm, 20 * mm], style=GRID)
+    doc.build([
+        p("<b>TAX INVOICE</b>", "Title"), head, Spacer(1, 4 * mm), buyer, Spacer(1, 4 * mm), table,
+        Spacer(1, 3 * mm),
+        p("Amount Chargeable (in words): INR Four Thousand Seventy One Only"),
         p("for Northwind Office Supplies Pvt Ltd &nbsp; Authorised Signatory"),
     ])
     return buf.getvalue()
@@ -555,6 +603,7 @@ FILES = {
     "services_invoice.pdf": services_invoice,
     "scanned_invoice.pdf": scanned_invoice,
     "gst_round_off.pdf": gst_round_off,
+    "gst_wrapped_total.pdf": gst_wrapped_total,
 }
 
 

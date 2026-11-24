@@ -326,3 +326,48 @@ def test_round_off_line_is_read_with_its_sign(line, expected):
     out = DemoExtractor().extract(text)
     assert out["rounding"] == expected
     assert out["total"] == round(1180 + expected, 2)
+
+
+# --- a total that wrapped in a narrow amount column ----------------------------
+
+
+def test_wrapped_total_is_read_not_the_quantity_total(demo):
+    # Before 2026-11-24 "Total   15 Nos   ₹" with "4,071.00" wrapped below it was
+    # read as a total of 15.00 (the quantity column), so a correct invoice went
+    # to review showing the wrong amount.
+    run = upload(demo, "gst_wrapped_total.pdf", pdf("gst_wrapped_total.pdf")).json()
+    inv = run["invoice"]
+    assert (inv["subtotal"], inv["tax"], inv["total"]) == (3450.0, 621.0, 4071.0)
+    assert run["status"] == "auto_approved"
+
+
+@pytest.mark.parametrize("total_lines, expected", [
+    (["Total                 15 Nos             ₹ 1,180.00"], 1180.0),     # quantity on the line, amount too
+    (["Total                 15 Nos             ₹", "                                    1,180.00"], 1180.0),
+    (["Total                 24 Pcs", "                                    1,180.00"], 1180.0),
+    (["Grand Total           3.5 Hrs", "                                  ₹ 1,180.00"], 1180.0),
+])
+def test_total_line_skips_the_quantity_and_finds_a_wrapped_amount(total_lines, expected):
+    text = "\n".join([
+        "TAX INVOICE", "Northwind Office Supplies Pvt Ltd", "Invoice No.: NW-1  Dated: 12-Nov-2026",
+        "Description                 Quantity     Rate        Amount",
+        "Copier paper                      10   100.00      1,000.00",
+        "Taxable Value                                     1,000.00",
+        "IGST @ 18%                                          180.00",
+        *total_lines,
+        "Amount Chargeable (in words): INR One Thousand One Hundred Eighty Only",
+    ])
+    assert DemoExtractor().extract(text)["total"] == expected
+
+
+def test_a_quantity_total_alone_is_never_the_invoice_total():
+    # No amount anywhere near the Total line: better no total (and a person
+    # looks) than the item count shown as the amount.
+    text = "\n".join([
+        "TAX INVOICE", "Northwind Office Supplies Pvt Ltd", "Invoice No.: NW-1  Dated: 12-Nov-2026",
+        "Description                 Quantity     Rate        Amount",
+        "Copier paper                      10   100.00      1,000.00",
+        "Total                 15 Nos",
+        "Amount Chargeable (in words): INR One Thousand Only",
+    ])
+    assert DemoExtractor().extract(text).get("total") != 15.0
