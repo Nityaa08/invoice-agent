@@ -192,3 +192,17 @@ def test_vendor_endpoint_limits(monkeypatch, tmp_path):
     assert [client.post("/api/vendors", json=QUILLMARK).status_code for _ in range(3)] == [200, 200, 429]
     cross = client.post("/api/vendors", json=QUILLMARK, headers={"Origin": "https://evil.example"})
     assert cross.status_code == 403
+
+
+def test_a_vendor_added_by_another_process_is_seen_without_a_restart(settings, sample_bytes):
+    # The MCP server and the web service share the SQLite files. Before 2026-11-25 each
+    # loaded added vendors only at startup, so a vendor added over MCP was unknown to
+    # the running web service and its recheck stayed in review.
+    web = InvoiceService.persistent(settings)
+    run, _ = web.submit("06_unknown_vendor.txt", sample_bytes("06_unknown_vendor.txt"))
+    assert run["status"] == "needs_review"
+    mcp = InvoiceService.persistent(settings)  # a second process on the same files
+    mcp.add_vendor(QUILLMARK, added_by="agent")
+    assert any(v["name"] == "Quillmark Stationers" for v in web.list_vendors())
+    after = web.review(run["id"], {"action": "recheck"})
+    assert web.store.get_invoice(after["id"])["status"] == "approved_after_recheck"

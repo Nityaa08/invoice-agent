@@ -18,6 +18,7 @@ import hashlib
 import json
 import logging
 import sqlite3
+import threading
 import uuid
 from datetime import date
 from pathlib import Path
@@ -46,8 +47,14 @@ class NotAwaitingReview(RuntimeError):
     pass
 
 
-def idempotency_key(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
+def idempotency_key(data: bytes, source: str | None = None) -> str:
+    """The same bytes are the same submission, unless one was read by OCR and the other was not.
+
+    Text read by OCR always goes to a person; keyed on the bytes alone, resending a file's
+    text flagged as OCR returned the earlier, unflagged run, so the OCR check never ran.
+    """
+    digest = hashlib.sha256(data).hexdigest()
+    return f"ocr:{digest}" if source == "ocr" else digest
 
 
 def load_purchase_orders(path: Path = DATA_DIR / "purchase_orders.json") -> dict[str, PurchaseOrder]:
@@ -80,10 +87,18 @@ def default_matcher() -> VendorMatcher:
 
 
 class InvoiceService:
-    def __init__(self, deps: Deps, checkpointer: BaseCheckpointSaver):
+    def __init__(self, deps: Deps, checkpointer: BaseCheckpointSaver, shared_vendors: bool = False):
         self.deps = deps
         self.store = deps.store
         self.graph = build_graph(deps).compile(checkpointer=checkpointer)
+        # Persistent mode: another process (the MCP server, a second worker) can add vendors
+        # to the same database, so the vendor list is re-read when its row count changes.
+        self._shared_vendors = shared_vendors
+        self._vendor_rows = self.store.added_vendor_count() if shared_vendors else 0
+        # One submission at a time per file, so two uploads of the same bytes cannot both
+        # see the other's run before its first checkpoint exists.
+        self._key_locks: dict[str, threading.Lock] = {}
+        self._key_locks_guard = threading.Lock()
 
     # --- construction ------------------------------------------------------------
 
@@ -120,7 +135,7 @@ class InvoiceService:
         store = InvoiceStore(settings.db_path)
         saver = SqliteSaver(sqlite3.connect(settings.checkpoint_path, check_same_thread=False))
         matcher = default_matcher().with_vendors(store.added_vendors())
-        return cls(cls._deps(settings, store, extractor, matcher), saver)
+        return cls(cls._deps(settings, store, extractor, matcher), saver, shared_vendors=True)
 
     @classmethod
     def ephemeral(cls, settings: Settings, extractor: Extractor | None = None,
@@ -140,21 +155,45 @@ class InvoiceService:
 
         source="ocr": the bytes are text a browser read from a photo; the run always goes to review.
         """
-        run_id = uuid.uuid4().hex[:16]
-        existing = self.store.register_run(run_id, idempotency_key(data), filename)
-        if existing != run_id:
-            self.store.audit(existing, "duplicate_submission", filename=filename)
-            snap = self.graph.get_state(self._config(existing))
-            if snap.next and not snap.interrupts:
-                # The first attempt stopped mid-way (crash, restart, timeout):
-                # pick up from the last checkpoint instead of starting over.
-                self._invoke(existing, None)
-            return self.view(existing, duplicate_submission=True), False
-        self.store.audit(run_id, "submitted", filename=filename, bytes=len(data))
+        key = idempotency_key(data, source)
+        with self._key_lock(key):
+            self._refresh_vendors()
+            run_id = uuid.uuid4().hex[:16]
+            existing = self.store.register_run(run_id, key, filename)
+            if existing != run_id:
+                self.store.audit(existing, "duplicate_submission", filename=filename)
+                snap = self.graph.get_state(self._config(existing))
+                if not snap.values:
+                    # Registered, but the graph never wrote a checkpoint (a crash right after
+                    # registering). Before 2026-11-25 this file then failed with a 500 forever.
+                    self._start(existing, filename, data, source)
+                elif snap.next and not snap.interrupts:
+                    # The first attempt stopped mid-way (crash, restart, timeout):
+                    # pick up from the last checkpoint instead of starting over.
+                    self._invoke(existing, None)
+                return self.view(existing, duplicate_submission=True), False
+            self.store.audit(run_id, "submitted", filename=filename, bytes=len(data))
+            self._start(run_id, filename, data, source)
+            return self.view(run_id), True
+
+    def _start(self, run_id: str, filename: str, data: bytes, source: str | None) -> None:
         self._invoke(run_id, {"run_id": run_id, "filename": filename, "file_bytes": data,
                               "source": "ocr" if source == "ocr" else None, "attempts": 0, "path": [],
                               "trace": []})
-        return self.view(run_id), True
+
+    def _key_lock(self, key: str) -> threading.Lock:
+        with self._key_locks_guard:
+            if len(self._key_locks) > 1000:  # forget idle locks; a held one is re-created at worst
+                self._key_locks = {k: v for k, v in self._key_locks.items() if v.locked()}
+            return self._key_locks.setdefault(key, threading.Lock())
+
+    def _refresh_vendors(self) -> None:
+        if not self._shared_vendors:
+            return
+        rows = self.store.added_vendor_count()
+        if rows != self._vendor_rows:
+            self.deps.matcher = default_matcher().with_vendors(self.store.added_vendors())
+            self._vendor_rows = rows
 
     def get(self, run_id: str) -> dict[str, Any]:
         return self.view(run_id)
@@ -166,6 +205,7 @@ class InvoiceService:
         if not snap.interrupts:
             raise NotAwaitingReview(f"run {run_id} is not waiting for a review")
         clean = validate_decision(decision, has_invoice=snap.values.get("invoice") is not None)
+        self._refresh_vendors()
         self.store.audit(run_id, "reviewed", action=clean["action"], reviewer=clean["reviewer"],
                          note=clean["note"])
         self._invoke(run_id, Command(resume=clean))
@@ -188,15 +228,19 @@ class InvoiceService:
         return out
 
     def list_vendors(self) -> list[dict[str, Any]]:
+        self._refresh_vendors()
         return self.deps.matcher.all()
 
     def add_vendor(self, data: Any, added_by: str = "reviewer") -> dict[str, Any]:
         """Check and save a vendor a reviewer added. Raises VendorRejected with a readable reason."""
+        self._refresh_vendors()
         vendor = check_new_vendor(data, self.deps.matcher)
         if vendor["vendor_id"] not in self.deps.matcher.vendors:
             added_by = str(added_by or "reviewer")[:80]
             self.store.add_vendor(vendor, added_by)
             self.deps.matcher = self.deps.matcher.with_vendors([vendor])  # the graph reads it on every run
+            if self._shared_vendors:
+                self._vendor_rows = self.store.added_vendor_count()
             self.store.audit(f"vendor:{vendor['vendor_id']}", "vendor_added", vendor_id=vendor["vendor_id"],
                              by=added_by)
         return vendor
@@ -205,8 +249,10 @@ class InvoiceService:
         try:
             self.graph.invoke(payload, self._config(run_id))
         except Exception as exc:  # the checkpoint keeps the progress made so far
+            # The audit log is returned by the API, so it gets the kind of error only; the
+            # message (which can name a path or quote the document) stays in the server log.
             log.exception("run %s stopped", run_id)
-            self.store.audit(run_id, "error", error=f"{type(exc).__name__}: {exc}")
+            self.store.audit(run_id, "error", error=type(exc).__name__)
 
     # --- read model --------------------------------------------------------------
 

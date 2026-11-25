@@ -209,6 +209,9 @@ class InvoiceStore:
                 (vendor["vendor_id"], vendor["name"], vendor.get("tax_id"), vendor["currency"], added_by, _now()),
             )
 
+    def added_vendor_count(self) -> int:
+        return self._conn.execute("SELECT COUNT(*) FROM vendors").fetchone()[0]
+
     def added_vendors(self) -> list[dict[str, Any]]:
         rows = self._conn.execute("SELECT * FROM vendors ORDER BY added_at, vendor_id").fetchall()
         return [{"vendor_id": r["vendor_id"], "name": r["name"], "tax_id": r["tax_id"], "currency": r["currency"],
