@@ -69,7 +69,7 @@ def test_indian_gst_invoice_reads_lakh_grouping_and_both_gst_halves(demo):
     run = upload(demo, "gst.pdf", pdf("gst_tax_invoice.pdf")).json()
     inv = run["invoice"]
     assert inv["line_items"][0] == {"description": "Steel almirah, 2 door", "quantity": 12.0,
-                                    "unit_price": 8500.0, "amount": 102000.0}
+                                    "unit_price": 8500.0, "discount": 0.0, "amount": 102000.0}
     assert inv["tax"] == 10449.0 * 2  # CGST 9% + SGST 9%
     passed = {x["name"] for x in run["rules"] if x["passed"]}
     assert {"line_items_sum_to_subtotal", "subtotal_plus_tax_equals_total", "dates_are_sane"} <= passed
@@ -91,7 +91,7 @@ def test_unreadable_table_falls_back_to_one_total_line_and_asks_a_human(demo):
     run = upload(demo, "services.pdf", pdf("services_invoice.pdf")).json()
     assert run["status"] == "needs_review"
     assert run["invoice"]["line_items"] == [{"description": "Invoice total (line items not itemised)",
-                                             "quantity": 1.0, "unit_price": 85000.0, "amount": 85000.0}]
+                                             "quantity": 1.0, "unit_price": 85000.0, "discount": 0.0, "amount": 85000.0}]
     reasons = " ".join(run["review_request"]["reasons"])
     assert "extraction_is_complete: could not read the line-item table" in reasons
 
@@ -401,3 +401,60 @@ def test_vertically_centred_description_keeps_the_words_above_its_numbers():
     text = to_text("blind2_gst_line_tax.pdf", pdf("blind2_gst_line_tax.pdf"))
     items = DemoExtractor().extract(text)["line_items"]
     assert [i["description"] for i in items] == ["Cloud hosting - November", "Managed backups"]
+
+
+# --- per-line discounts (a "Disc. %" column) ---------------------------------------
+
+
+def test_line_discount_invoice_from_a_known_vendor_is_auto_approved(demo):
+    # Before 2026-11-25 the discounted line (2 x 4,500.00 less 10% = 8,100.00) was
+    # dropped because quantity x rate is not the amount, so this correct invoice
+    # went to review: "line items add up to 2650.00 but the subtotal says 10750.00".
+    run = upload(demo, "gst_line_discount.pdf", pdf("gst_line_discount.pdf")).json()
+    items = run["invoice"]["line_items"]
+    assert [(i["quantity"], i["unit_price"], i["discount"], i["amount"]) for i in items] == [
+        (2.0, 4500.0, 900.0, 8100.0), (10.0, 265.0, 0.0, 2650.0)]
+    assert run["status"] == "auto_approved"
+    detail = next(r["detail"] for r in run["rules"] if r["name"] == "line_items_sum_to_subtotal")
+    assert "after line discounts of 900.00" in detail
+
+
+def _discount_table(header: str, row: str) -> str:
+    return "\n".join([
+        "TAX INVOICE", "Northwind Office Supplies Pvt Ltd", "Invoice No.: NW-1  Dated: 12-Nov-2026",
+        header,
+        row,
+        "Copier paper              10 Nos      100.00                   1,000.00",
+        "Taxable Value                                                  9,100.00",
+        "Total                                                        ₹ 9,100.00",
+    ])
+
+
+@pytest.mark.parametrize("header, row, discount", [
+    # a percentage column
+    ("Description               Qty         Rate       Disc. %      Amount",
+     "Office chair               2 Nos    4,500.00       10%       8,100.00", 900.0),
+    ("Description               Qty         Rate       Disc %       Amount",
+     "Office chair               2 Nos    4,500.00      10 %       8,100.00", 900.0),
+    # an amount column
+    ("Description               Qty         Rate       Discount     Amount",
+     "Office chair               2         4,500.00      900.00     8,100.00", 900.0),
+])
+def test_a_discount_column_is_read(header, row, discount):
+    items = DemoExtractor().extract(_discount_table(header, row))["line_items"]
+    assert len(items) == 2
+    assert (items[0]["quantity"], items[0]["unit_price"], items[0]["discount"], items[0]["amount"]) == (
+        2.0, 4500.0, discount, 8100.0)
+
+
+@pytest.mark.parametrize("header, row", [
+    # no discount column in the header: a % cell is a tax rate or noise, not a discount
+    ("Description               Qty         Rate       GST %        Amount",
+     "Office chair               2 Nos    4,500.00       10%       8,100.00"),
+    # the printed discount does not explain the amount (10% of 9,000 is 900, not 1,000)
+    ("Description               Qty         Rate       Disc. %      Amount",
+     "Office chair               2 Nos    4,500.00       10%       8,000.00"),
+])
+def test_a_discount_is_only_read_when_printed_and_it_adds_up(header, row):
+    items = DemoExtractor().extract(_discount_table(header, row))["line_items"]
+    assert [i["description"] for i in items] == ["Copier paper"]

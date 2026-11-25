@@ -27,7 +27,11 @@ class LineItem(BaseModel):
     description: str = Field(min_length=1, max_length=500, description="What was bought, as written on the invoice")
     quantity: float = Field(gt=0, le=MAX_NUMBER, description="Number of units")
     unit_price: float = Field(ge=0, le=MAX_NUMBER, description="Price per unit, before tax")
-    amount: float = Field(ge=0, le=MAX_NUMBER, description="Line total before tax, as printed")
+    discount: float = Field(
+        default=0, ge=0, le=MAX_NUMBER,
+        description="Discount on this line as a positive amount (a 'Disc.' column); 0 if there is none",
+    )
+    amount: float = Field(ge=0, le=MAX_NUMBER, description="Line total before tax, after any line discount, as printed")
 
 
 class Invoice(BaseModel):

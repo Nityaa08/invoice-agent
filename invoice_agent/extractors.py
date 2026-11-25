@@ -358,8 +358,22 @@ def _row_numbers(cells: list[str], decimal_comma: bool) -> list[float | None]:
     return out
 
 
-def _parse_row(line: str, decimal_comma: bool) -> dict[str, Any] | None:
-    """One table row -> a line item, if some quantity x unit price = amount in it."""
+_DISCOUNT_HEADER = re.compile(r"\b(disc(?:ount)?|rabatt|remise|descuento|dto|korting)\b", re.I)
+
+
+def _percent(cell: str) -> float | None:
+    """'10%' / '12.5 %' / '7,5%' -> 10.0 / 12.5 / 7.5; anything else -> None."""
+    m = re.fullmatch(r"(\d{1,2}(?:[.,]\d{1,2})?|100)\s*%", cell.strip())
+    return float(m.group(1).replace(",", ".")) if m else None
+
+
+def _parse_row(line: str, decimal_comma: bool, line_discount: bool = False) -> dict[str, Any] | None:
+    """One table row -> a line item, if some quantity x unit price = amount in it.
+
+    With `line_discount` (the table header has a "Disc." column), a row also
+    counts when quantity x unit price less a printed discount is the amount: a
+    percentage ("10%") or an amount, in a cell between the price and the amount.
+    """
     cells = [c for _, _, c in _cells(line)]
     if len(cells) < 3:
         return None
@@ -382,7 +396,32 @@ def _parse_row(line: str, decimal_comma: bool) -> dict[str, Any] | None:
                 if qty and qty > 0 and abs(qty * unit - amount) <= max(0.02, amount * 0.0005):
                     return {"description": max(texts, key=len).strip(), "quantity": qty,
                             "unit_price": unit, "amount": amount}
+        if line_discount:
+            item = _discounted_row(cells, nums, texts, left, a_pos)
+            if item:
+                return item
         break  # only try the rightmost number as the amount
+    return None
+
+
+def _discounted_row(cells: list[str], nums: list[float | None], texts: list[str],
+                    left: list[int], a_pos: int) -> dict[str, Any] | None:
+    """quantity x unit price - discount = amount, with the discount printed between price and amount."""
+    amount = nums[a_pos]
+    for q_i, u_i in sorted(combinations(left, 2), key=lambda p: (-p[1], -p[0])):
+        between = range(max(q_i, u_i) + 1, a_pos)
+        for qty, unit in ((nums[q_i], nums[u_i]), (nums[u_i], nums[q_i])):
+            if not qty or qty <= 0 or not unit:
+                continue
+            gross = qty * unit
+            if amount >= gross:
+                continue
+            for d_i in between:
+                pct = _percent(cells[d_i])
+                off = round(gross * pct / 100, 2) if pct is not None else nums[d_i]
+                if off and 0 < off < gross and abs(gross - off - amount) <= 0.02:
+                    return {"description": max(texts, key=len).strip(), "quantity": qty, "unit_price": unit,
+                            "discount": round(gross - amount, 2), "amount": amount}
     return None
 
 
@@ -574,6 +613,8 @@ class DemoExtractor:
             amounts_only = header_at is not None
         if header_at is None:
             return None, []
+        # A "Disc." column, on the header line or its wrapped second line.
+        line_discount = bool(_DISCOUNT_HEADER.search(" ".join(lines[header_at:header_at + 2])))
         items = []
         desc_at = None  # where the last item's description starts on its line
         before_first: list[tuple[int, str]] = []  # lone text lines above the first row
@@ -583,7 +624,7 @@ class DemoExtractor:
                 continue
             if any(_total_kind(c) in {"subtotal", "total", "due", "tax_total"} for _, _, c in cells[:3]):
                 break
-            row = _parse_amount_row(line, dc) if amounts_only else _parse_row(line, dc)
+            row = _parse_amount_row(line, dc) if amounts_only else _parse_row(line, dc, line_discount)
             if row:
                 desc_at = next((s for s, _, c in cells if c.strip() == row["description"]), None)
                 if not items and desc_at is not None:
@@ -658,7 +699,8 @@ Return only what is printed on the invoice. Do not calculate, correct or guess:
 if the total printed is wrong, return the printed total. Use null for optional
 fields that are not on the invoice. Dates are YYYY-MM-DD. Amounts are plain
 numbers without currency symbols or thousands separators. An invoice-level
-discount goes in `discount` as a positive number. A round-off line ("Round Off
+discount goes in `discount` as a positive number; a discount printed on one line
+item goes in that item's `discount`, and its `amount` is the printed amount after it. A round-off line ("Round Off
 (-)0.30") goes in `rounding`, negative when it lowers the total. Currency is the ISO 4217
 code (for example INR for rupees, EUR for euros).
 

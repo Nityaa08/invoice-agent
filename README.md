@@ -166,7 +166,7 @@ Settings are environment variables; see [`.env.example`](.env.example). To load 
 | **Stateless demo** (as on Vercel) | `VERCEL=1 uvicorn main:app --port 8765` (`make demo`) | Exactly the public site: each run lives in one request; review decisions and added vendors come back from the browser |
 | **With a real model** | add `GROQ_API_KEY=...` to either command | The LLM reads invoices; everything after extraction is unchanged |
 | **MCP server** | `python -m invoice_agent.mcp_server` (`make mcp`) | The agent as tools over stdio, for Claude Desktop; `--http` for streamable HTTP on 127.0.0.1:8770, `--read-only` without `add_vendor` |
-| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 442 tests; seven labelled sets; demo extractor vs the model |
+| **Tests / evals** | `make test`, `make eval-all`, `make compare` | 452 tests; seven labelled sets; demo extractor vs the model |
 
 ### The real model (Groq's free tier, or any OpenAI-compatible API)
 
@@ -303,7 +303,7 @@ Uploads to the public demo use the demo extractor, so it has to cope with invoic
 | | Handled |
 |---|---|
 | Layouts | label and value side by side, in two columns, or the label above its value (Tally-style boxes); bordered and borderless tables; totals blocks on the right; multi-page invoices (line items on every page, totals on the last; the first 9 pages and the last one are read) |
-| Labels | Invoice No. / Invoice # / Inv # / Invoice Ref / Bill No / Invoice:; Invoice Date / Dated / Date of issue / Tax Point; Due Date / Payment due; PO / P.O. # / Buyer's Order No. / Your Order; Sub Total / Taxable Value / Total excl. VAT / Net Total; CGST / SGST / IGST / VAT / Sales Tax / HST; Round Off / Rounded Off / Rounding (Tally's `(-)0.40` included); Grand Total / Invoice Total / Total; Amount Due / Balance Due / Amount Owing |
+| Labels | Invoice No. / Invoice # / Inv # / Invoice Ref / Bill No / Invoice:; Invoice Date / Dated / Date of issue / Tax Point; Due Date / Payment due; PO / P.O. # / Buyer's Order No. / Your Order; Sub Total / Taxable Value / Total excl. VAT / Net Total; CGST / SGST / IGST / VAT / Sales Tax / HST; Round Off / Rounded Off / Rounding (Tally's `(-)0.40` included); a per-line Disc. % / Discount column; Grand Total / Invoice Total / Total; Amount Due / Balance Due / Amount Owing |
 | Numbers | `1,234.56`, `1.234,56` (decided once per document), Indian lakh grouping `1,23,456.00`; `₹`, `Rs.`, `INR`, `$`, `US$`, `CA$`, `€`, `£` |
 | Dates | `2026-11-14`, `14-Nov-2026`, `14 Nov 2026`, `2nd November, 2026`, `November 2, 2026`, `14.11.2026`, `14/11/2026`, `11/14/2026` (month first on US-dollar invoices, unless a part over 12 says otherwise), two-digit years |
 | Tax ids | GSTIN (the seller's, the first one printed), EU VAT numbers including spaced ones, US EIN, Canadian GST/HST numbers |
@@ -324,7 +324,7 @@ A real model (`EXTRACTOR=llm`) reads uploads through the same path and does not 
 python -m pytest
 ```
 
-442 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 442 passed locally on 3.13 on 2026-11-24.
+452 tests, no network or API key needed, about 15 seconds. They run on Python 3.11, 3.12 and 3.13 in CI; 452 passed locally on 3.12 on 2026-11-25.
 
 | File | What it covers |
 |---|---|
@@ -452,7 +452,7 @@ For the full service with persistence, run `uvicorn main:app` on any VM or conta
 - **No authentication** on the full service: anyone who can reach it can read or review a run whose id they know (ids are 64 random bits). Run it behind an authenticating proxy or add auth before real use. The demo stores nothing, so there is no one else's run to reach (see Security).
 - **The batch queue runs one file at a time in the page**, and each file counts toward the demo's limit. Nothing is kept after the tab closes except added vendors.
 - **The demo rate limit is per function instance** (60 runs an hour per IP, 30 vendor additions), not global: serverless instances share no memory. A shared store or Vercel's firewall rate-limit rules would make it global.
-- **Single currency per invoice**, no partial payments and no credit notes (negative amounts go to a person). Invoice-level discounts are read; per-line discount columns (quantity x price not equal to the printed amount) are not read as items.
+- **Single currency per invoice**, no partial payments and no credit notes (negative amounts go to a person). Invoice-level discounts are read, and so are per-line discount columns ("Disc. %" or a discount amount, when the table header names a discount column and quantity x price less that discount is the printed amount); a line whose discount is not printed, or does not add up, is not read as an item and the invoice goes to a person.
 - **The injection check is a phrase list.** It catches the common phrasings, including white-on-white text in a PDF, and it is defence in depth: the outcome never depends on the model following or ignoring instructions, because the rules decide. A reworded instruction can get past the phrase list; it still cannot approve anything the rules reject.
 
 ## Security

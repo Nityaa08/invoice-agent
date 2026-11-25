@@ -147,3 +147,37 @@ def test_schema_requires_core_fields():
     del data["invoice_number"]
     with pytest.raises(ValidationError, match="invoice_number"):
         Invoice.model_validate(data)
+
+
+# --- per-line discounts ("Disc." column) -------------------------------------------
+
+_DISCOUNTED = [
+    {"description": "Office chair", "quantity": 2, "unit_price": 4500.0, "discount": 900.0, "amount": 8100.0},
+    {"description": "Copier paper", "quantity": 10, "unit_price": 265.0, "amount": 2650.0},
+]
+
+
+def test_a_line_discount_is_taken_off_quantity_x_price():
+    inv = good_invoice(line_items=_DISCOUNTED, subtotal=10750.0, tax=1935.0, total=12685.0)
+    result = rules.line_items_sum_to_subtotal(inv, ctx())
+    assert result.passed
+    assert "after line discounts of 900.00" in result.detail
+
+
+@pytest.mark.parametrize("discount, amount, message", [
+    (500.0, 8100.0, "less the line discount does not match"),  # 9000 - 500 is not 8100
+    (9500.0, 0.0, "line discount is larger than quantity x unit price"),
+])
+def test_a_line_discount_that_does_not_add_up_fails(discount, amount, message):
+    items = [dict(_DISCOUNTED[0], discount=discount, amount=amount), _DISCOUNTED[1]]
+    subtotal = amount + 2650.0
+    inv = good_invoice(line_items=items, subtotal=subtotal, tax=0.0, total=subtotal)
+    result = rules.line_items_sum_to_subtotal(inv, ctx())
+    assert not result.passed
+    assert message in result.detail
+
+
+def test_a_negative_line_discount_cannot_raise_a_line():
+    # A "discount" of -900 would turn 9000 into 9900; the schema refuses it.
+    with pytest.raises(ValidationError):
+        good_invoice(line_items=[dict(_DISCOUNTED[0], discount=-900.0, amount=9900.0)])

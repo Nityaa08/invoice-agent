@@ -50,6 +50,7 @@ The design principle under test: **the model reads; tested code decides.** An at
 | RT-36 | Medium | Prompt injection not flagged on the first review when extraction is incomplete | Fixed (2026-11-19) |
 | RT-37 | Medium | pdf.js from a CDN for scanned PDFs: supply chain, and a hostile PDF in the visitor's browser | Mitigated (pinned 4.10.38, SRI, path-scoped CSP, eval and PDF scripts off); residual risk documented |
 | RT-38 | Low | A new "Round Off" field used to hide a real adjustment in a padded total | Not vulnerable (round-off must be under 1.00; tested) |
+| RT-39 | Low | A new per-line `discount` field used to raise a line, or to explain away a wrong amount | Not vulnerable (discount is never negative, never above quantity x price, and must close exactly; tested) |
 
 ## Findings
 
@@ -310,6 +311,10 @@ Scanned PDFs used to stop at "this PDF is a scanned image, upload a photo instea
 ### RT-38 · Low · Round-off lines (2026-11-23)
 
 Tally and most Indian billing software print "Round Off (-)0.40" between the tax and the total. The demo ignored that line, so a correct invoice failed `subtotal_plus_tax_equals_total` by the round-off and could never be auto-approved. The schema now has a signed `rounding` field (read from Round Off / Rounded Off / Rounding / "Less: Round Off", with Tally's `(-)` sign) and the rule adds it. Because the label looks harmless, an attacker could print "Round Off 500.00" to make a padded total add up, so the rule fails any round-off of 1.00 or more ("a round-off of 500.00 is not rounding") and a round-off never excuses a total that is wrong by more. *Tests: `test_redteam.py::test_rt_a_round_off_line_cannot_hide_a_real_adjustment`, `test_rt_a_round_off_must_still_add_up`, `test_real_world_pdfs.py::test_round_off_invoice_from_a_known_vendor_is_auto_approved`, `test_round_off_line_is_read_with_its_sign`.*
+
+### RT-39 · Low · Per-line discount columns (2026-11-25)
+
+Tally and most Indian billing software print a "Disc. %" column. The demo dropped any row where quantity x rate was not the amount, so a correct invoice with one discounted line went to review ("line items add up to 2650.00 but the subtotal says 10750.00"). Line items now have a `discount` field, and `line_items_sum_to_subtotal` checks quantity x unit price - discount = amount. A discount can only lower a line: the schema refuses a negative one (which would raise it), and the rule fails a discount larger than quantity x price. The demo extractor reads a line discount only when the table header names a discount column and the printed percentage or amount closes the row to the cent, so a GST-rate column or a stray "10%" is never taken as a discount. *Tests: `test_rules.py::test_a_line_discount_is_taken_off_quantity_x_price`, `test_a_line_discount_that_does_not_add_up_fails`, `test_a_negative_line_discount_cannot_raise_a_line`, `test_real_world_pdfs.py::test_line_discount_invoice_from_a_known_vendor_is_auto_approved`, `test_a_discount_column_is_read`, `test_a_discount_is_only_read_when_printed_and_it_adds_up`.*
 
 ## Reliability notes from the same pass
 

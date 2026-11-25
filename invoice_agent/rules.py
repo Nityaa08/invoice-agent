@@ -137,16 +137,30 @@ def duplicate_key(invoice: Invoice, match: VendorMatch) -> tuple[str, str]:
 
 def line_items_sum_to_subtotal(invoice: Invoice, ctx: RuleContext) -> RuleResult:
     lines = sum((money(item.amount) for item in invoice.line_items), Decimal("0"))
-    bad_lines = [
+    # A line discount ("Disc." column) comes off quantity x unit price. It can
+    # only lower a line, never raise it, and never past zero.
+    too_big = [
         item.description
         for item in invoice.line_items
-        if abs(money(item.quantity * item.unit_price) - money(item.amount)) > MONEY_TOLERANCE
+        if money(item.discount) > money(item.quantity * item.unit_price)
     ]
-    if bad_lines:
+    if too_big:
         return RuleResult(
             "line_items_sum_to_subtotal",
             False,
-            f"quantity x unit price does not match the amount on: {', '.join(bad_lines)}",
+            f"the line discount is larger than quantity x unit price on: {', '.join(too_big)}",
+        )
+    bad_lines = [
+        item.description
+        for item in invoice.line_items
+        if abs(money(item.quantity * item.unit_price) - money(item.discount) - money(item.amount)) > MONEY_TOLERANCE
+    ]
+    if bad_lines:
+        less = " less the line discount" if any(item.discount for item in invoice.line_items) else ""
+        return RuleResult(
+            "line_items_sum_to_subtotal",
+            False,
+            f"quantity x unit price{less} does not match the amount on: {', '.join(bad_lines)}",
         )
     diff = lines - money(invoice.subtotal)
     if abs(diff) > MONEY_TOLERANCE:
@@ -156,7 +170,10 @@ def line_items_sum_to_subtotal(invoice: Invoice, ctx: RuleContext) -> RuleResult
             f"line items add up to {lines} but the subtotal says {money(invoice.subtotal)} (off by {diff})",
         )
     n = len(invoice.line_items)
-    return RuleResult("line_items_sum_to_subtotal", True, f"{n} line{'s' if n > 1 else ''} add{'' if n > 1 else 's'} up to {lines}")
+    line_discounts = sum((money(item.discount) for item in invoice.line_items), Decimal("0"))
+    after = f", after line discounts of {line_discounts}" if line_discounts else ""
+    return RuleResult("line_items_sum_to_subtotal", True,
+                      f"{n} line{'s' if n > 1 else ''} add{'' if n > 1 else 's'} up to {lines}{after}")
 
 
 def subtotal_plus_tax_equals_total(invoice: Invoice, ctx: RuleContext) -> RuleResult:

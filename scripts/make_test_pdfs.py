@@ -195,6 +195,53 @@ def gst_wrapped_total() -> bytes:
     return buf.getvalue()
 
 
+def gst_line_discount() -> bytes:
+    """Tally-style GST invoice with a per-line "Disc. %" column.
+
+    Added 2026-11-25: Tally and most Indian billing software print a discount
+    column, and the demo dropped the discounted line (quantity x rate is not the
+    amount), so a correct invoice from a known vendor went to review with "line
+    items add up to 2650.00 but the subtotal says 10750.00".
+    """
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=14 * mm, rightMargin=14 * mm, topMargin=12 * mm)
+    ss = _styles()
+    p = lambda t, s="Normal": Paragraph(t, ss[s])  # noqa: E731
+    seller = p("<b>Northwind Office Supplies Pvt Ltd</b><br/>14 Residency Road, Bengaluru 560025<br/>"
+               "GSTIN/UIN: 29ABCDE1234F1Z5<br/>State Name: Karnataka, Code: 29")
+    meta = Table([
+        ["Invoice No.", "Dated"],
+        ["NW/2026-27/0466", "16-Nov-2026"],
+        ["Delivery Note", "Mode/Terms of Payment"],
+        ["DN-0131", "30 days"],
+    ], colWidths=[42 * mm, 43 * mm], style=TableStyle([
+        ("FONT", (0, 0), (-1, -1), FONT, 8), ("BOX", (0, 0), (0, 1), 0.5, colors.grey),
+        ("BOX", (1, 0), (1, 1), 0.5, colors.grey), ("BOX", (0, 2), (0, 3), 0.5, colors.grey),
+        ("BOX", (1, 2), (1, 3), 0.5, colors.grey)]))
+    head = Table([[seller, meta]], colWidths=[95 * mm, 87 * mm])
+    head.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP"), ("BOX", (0, 0), (-1, -1), 0.5, colors.grey)]))
+    buyer = p("<b>Buyer (Bill to)</b><br/>Example Retail Co<br/>5 Lake View Road, Bengaluru 560001<br/>"
+              "GSTIN/UIN: 29AABCE9876K1Z2")
+    rows = [
+        ["Sl No.", "Description of Goods", "HSN/SAC", "Quantity", "Rate", "per", "Disc. %", "Amount"],
+        ["1", "Office chair, ergonomic", "9401", "2 Nos", "4,500.00", "Nos", "10%", "8,100.00"],
+        ["2", "A4 copier paper, 500 sheets", "4802", "10 Nos", "265.00", "Nos", "", "2,650.00"],
+        ["", "", "", "", "", "", "Taxable Value", "10,750.00"],
+        ["", "CGST @ 9%", "", "", "", "", "", "967.50"],
+        ["", "SGST @ 9%", "", "", "", "", "", "967.50"],
+        ["", "Total", "", "12 Nos", "", "", "", "₹ 12,685.00"],
+    ]
+    table = Table(rows, colWidths=[11 * mm, 52 * mm, 17 * mm, 18 * mm, 20 * mm, 12 * mm, 24 * mm, 28 * mm],
+                  style=GRID)
+    doc.build([
+        p("<b>TAX INVOICE</b>", "Title"), head, Spacer(1, 4 * mm), buyer, Spacer(1, 4 * mm), table,
+        Spacer(1, 3 * mm),
+        p("Amount Chargeable (in words): INR Twelve Thousand Six Hundred Eighty Five Only"),
+        p("for Northwind Office Supplies Pvt Ltd &nbsp; Authorised Signatory"),
+    ])
+    return buf.getvalue()
+
+
 def _html_pdf(html: str, fmt: str = "A4") -> bytes:
     from playwright.sync_api import sync_playwright
 
@@ -604,6 +651,7 @@ FILES = {
     "scanned_invoice.pdf": scanned_invoice,
     "gst_round_off.pdf": gst_round_off,
     "gst_wrapped_total.pdf": gst_wrapped_total,
+    "gst_line_discount.pdf": gst_line_discount,
 }
 
 
