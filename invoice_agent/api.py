@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from starlette.concurrency import run_in_threadpool
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, Field
@@ -362,7 +363,9 @@ def _register_full(app: FastAPI, settings: Settings):
                      source: str | None = Form(None)):
         origin = _source(source)
         filename, data = await _read_input(file, sample)
-        run, created = service.submit(filename, data, source=origin)
+        # The graph is synchronous (and an LLM call can take seconds): run it in a worker
+        # thread so one upload does not hold up every other request.
+        run, created = await run_in_threadpool(service.submit, filename, data, source=origin)
         # Same file again: 200 with the original run instead of a second one.
         return run if created else JSONResponse(run, status_code=200)
 
@@ -490,15 +493,20 @@ def _register_demo(app: FastAPI, settings: Settings) -> None:
         run_settings = replace(settings, as_of=None) if uploaded and not settings.as_of_from_env else settings
         from .service import InvoiceService  # first POST pays for LangGraph; GETs never do
 
-        service = InvoiceService.ephemeral(run_settings, vendors=added)
-        run, _ = service.submit(filename, data, source=origin)
-        for step in steps:
-            if run["status"] != "needs_review":
-                break
-            try:
-                run = service.review(run["id"], step)
-            except ValueError as exc:
-                raise HTTPException(422, str(exc))
+        def process() -> dict:
+            service = InvoiceService.ephemeral(run_settings, vendors=added)
+            run, _ = service.submit(filename, data, source=origin)
+            for step in steps:
+                if run["status"] != "needs_review":
+                    break
+                try:
+                    run = service.review(run["id"], step)
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc))
+            return run
+
+        # Off the event loop: the graph is synchronous, and with a model key a run waits on it.
+        run = await run_in_threadpool(process)
         # One structured line per demo run: kind, size, extension, outcome, timings. No names or contents.
         log.info("demo_run", extra={"fields": {
             "event": "demo_run", "run_id": run["id"], "input": kind, "bytes": len(data), "ext": ext,
