@@ -614,7 +614,7 @@ function renderQueue() {
   $("queue").innerHTML = S.items.map((it, i) => {
     const [cls, label] = pillFor(it);
     const inv = it.run && it.run.invoice;
-    const what = it.error ? it.error : it.note || (inv ? `${inv.vendor_name} · ${inv.currency} ${Number(inv.total).toLocaleString()}` : "");
+    const what = it.error ? it.error : it.note || (inv ? `${inv.vendor_name} · ${inv.currency} ${Number(inv.total).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "");
     return `<li><button type="button" data-item="${i}" aria-current="${i === S.cur}">
       <span class="qname">${esc(it.input.label || it.input.sample)}<small>${esc(what)}</small></span>
       <span class="qpill ${cls}">${esc(label)}</span></button></li>`;

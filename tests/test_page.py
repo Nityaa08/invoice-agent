@@ -42,3 +42,9 @@ def test_storage_access_is_guarded():
     for line in SCRIPT.splitlines():
         if "localStorage." in line:
             assert "try" in line, line  # a private window can throw; the page must keep working
+
+
+def test_queue_totals_keep_two_decimals():
+    # "Run all samples" showed "USD 1,861.9": a bare toLocaleString() drops trailing zeros.
+    line = next(ln for ln in SCRIPT.splitlines() if "inv.vendor_name} · ${inv.currency}" in ln)
+    assert "minimumFractionDigits: 2" in line
